@@ -1,24 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * WUSB Wire Adapter: Control/Data Streaming Interface (WUSB[8])
  * Device Connect handling
  *
  * Copyright (C) 2006 Intel Corporation
  * Inaky Perez-Gonzalez <inaky.perez-gonzalez@intel.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
  *
  * FIXME: docs
  * FIXME: this file needs to be broken up, it's grown too big
@@ -329,7 +315,7 @@ void wusbhc_devconnect_ack(struct wusbhc *wusbhc, struct wusb_dn_connect *dnc,
 	port->wusb_dev = wusb_dev;
 	port->status |= USB_PORT_STAT_CONNECTION;
 	port->change |= USB_PORT_STAT_C_CONNECTION;
-	/* Now the port status changed to connected; khubd will
+	/* Now the port status changed to connected; hub_wq will
 	 * pick the change up and try to reset the port to bring it to
 	 * the enabled state--so this process returns up to the stack
 	 * and it calls back into wusbhc_rh_port_reset().
@@ -343,7 +329,7 @@ error_unlock:
 /*
  * Disconnect a Wireless USB device from its fake port
  *
- * Marks the port as disconnected so that khubd can pick up the change
+ * Marks the port as disconnected so that hub_wq can pick up the change
  * and drops our knowledge about the device.
  *
  * Assumes there is a device connected
@@ -379,7 +365,7 @@ static void __wusbhc_dev_disconnect(struct wusbhc *wusbhc,
 		wusbhc_gtk_rekey(wusbhc);
 
 	/* The Wireless USB part has forgotten about the device already; now
-	 * khubd's timer will pick up the disconnection and remove the USB
+	 * hub_wq's timer will pick up the disconnection and remove the USB
 	 * device from the system
 	 */
 }
@@ -893,7 +879,6 @@ out:
 error_nodev:
 	return;
 
-	wusb_dev_sysfs_rm(wusb_dev);
 error_add_sysfs:
 	wusb_dev_bos_rm(wusb_dev);
 error_bos_add:

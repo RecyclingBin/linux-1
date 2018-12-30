@@ -39,11 +39,59 @@
 char *xstrdup(const char *s)
 {
 	int len = strlen(s) + 1;
-	char *dup = xmalloc(len);
+	char *d = xmalloc(len);
 
-	memcpy(dup, s, len);
+	memcpy(d, s, len);
 
-	return dup;
+	return d;
+}
+
+int xavsprintf_append(char **strp, const char *fmt, va_list ap)
+{
+	int n, size = 0;	/* start with 128 bytes */
+	char *p;
+	va_list ap_copy;
+
+	p = *strp;
+	if (p)
+		size = strlen(p);
+
+	va_copy(ap_copy, ap);
+	n = vsnprintf(NULL, 0, fmt, ap_copy) + 1;
+	va_end(ap_copy);
+
+	p = xrealloc(p, size + n);
+
+	n = vsnprintf(p + size, n, fmt, ap);
+
+	*strp = p;
+	return strlen(p);
+}
+
+int xasprintf_append(char **strp, const char *fmt, ...)
+{
+	int n;
+	va_list ap;
+
+	va_start(ap, fmt);
+	n = xavsprintf_append(strp, fmt, ap);
+	va_end(ap);
+
+	return n;
+}
+
+int xasprintf(char **strp, const char *fmt, ...)
+{
+	int n;
+	va_list ap;
+
+	*strp = NULL;
+
+	va_start(ap, fmt);
+	n = xavsprintf_append(strp, fmt, ap);
+	va_end(ap);
+
+	return n;
 }
 
 char *join_path(const char *path, const char *name)
@@ -70,7 +118,7 @@ char *join_path(const char *path, const char *name)
 	return str;
 }
 
-int util_is_printable_string(const void *data, int len)
+bool util_is_printable_string(const void *data, int len)
 {
 	const char *s = data;
 	const char *ss, *se;
@@ -87,7 +135,7 @@ int util_is_printable_string(const void *data, int len)
 
 	while (s < se) {
 		ss = s;
-		while (s < se && *s && isprint(*s))
+		while (s < se && *s && isprint((unsigned char)*s))
 			s++;
 
 		/* not zero, or not done yet */
@@ -152,7 +200,6 @@ char get_escape_char(const char *s, int *i)
 	int	j = *i + 1;
 	char	val;
 
-	assert(c);
 	switch (c) {
 	case 'a':
 		val = '\a';
@@ -198,11 +245,11 @@ char get_escape_char(const char *s, int *i)
 	return val;
 }
 
-int utilfdt_read_err_len(const char *filename, char **buffp, off_t *len)
+int utilfdt_read_err(const char *filename, char **buffp, size_t *len)
 {
 	int fd = 0;	/* assume stdin */
 	char *buf = NULL;
-	off_t bufsize = 1024, offset = 0;
+	size_t bufsize = 1024, offset = 0;
 	int ret = 0;
 
 	*buffp = NULL;
@@ -219,10 +266,6 @@ int utilfdt_read_err_len(const char *filename, char **buffp, off_t *len)
 		if (offset == bufsize) {
 			bufsize *= 2;
 			buf = xrealloc(buf, bufsize);
-			if (!buf) {
-				ret = ENOMEM;
-				break;
-			}
 		}
 
 		ret = read(fd, &buf[offset], bufsize - offset);
@@ -239,20 +282,15 @@ int utilfdt_read_err_len(const char *filename, char **buffp, off_t *len)
 		free(buf);
 	else
 		*buffp = buf;
-	*len = bufsize;
+	if (len)
+		*len = bufsize;
 	return ret;
 }
 
-int utilfdt_read_err(const char *filename, char **buffp)
-{
-	off_t len;
-	return utilfdt_read_err_len(filename, buffp, &len);
-}
-
-char *utilfdt_read_len(const char *filename, off_t *len)
+char *utilfdt_read(const char *filename, size_t *len)
 {
 	char *buff;
-	int ret = utilfdt_read_err_len(filename, &buff, len);
+	int ret = utilfdt_read_err(filename, &buff, len);
 
 	if (ret) {
 		fprintf(stderr, "Couldn't open blob from '%s': %s\n", filename,
@@ -261,12 +299,6 @@ char *utilfdt_read_len(const char *filename, off_t *len)
 	}
 	/* Successful read */
 	return buff;
-}
-
-char *utilfdt_read(const char *filename)
-{
-	off_t len;
-	return utilfdt_read_len(filename, &len);
 }
 
 int utilfdt_write_err(const char *filename, const void *blob)
@@ -353,7 +385,6 @@ int utilfdt_decode_type(const char *fmt, int *type, int *size)
 void utilfdt_print_data(const char *data, int len)
 {
 	int i;
-	const char *p = data;
 	const char *s;
 
 	/* no data, don't print */
@@ -372,14 +403,15 @@ void utilfdt_print_data(const char *data, int len)
 		} while (s < data + len);
 
 	} else if ((len % 4) == 0) {
-		const uint32_t *cell = (const uint32_t *)data;
+		const fdt32_t *cell = (const fdt32_t *)data;
 
 		printf(" = <");
-		for (i = 0; i < len; i += 4)
+		for (i = 0, len /= 4; i < len; i++)
 			printf("0x%08x%s", fdt32_to_cpu(cell[i]),
-			       i < (len - 4) ? " " : "");
+			       i < (len - 1) ? " " : "");
 		printf(">");
 	} else {
+		const unsigned char *p = (const unsigned char *)data;
 		printf(" = [");
 		for (i = 0; i < len; i++)
 			printf("%02x%s", *p++, i < len - 1 ? " " : "");
@@ -387,15 +419,16 @@ void utilfdt_print_data(const char *data, int len)
 	}
 }
 
-void util_version(void)
+void NORETURN util_version(void)
 {
 	printf("Version: %s\n", DTC_VERSION);
 	exit(0);
 }
 
-void util_usage(const char *errmsg, const char *synopsis,
-		const char *short_opts, struct option const long_opts[],
-		const char * const opts_help[])
+void NORETURN util_usage(const char *errmsg, const char *synopsis,
+			 const char *short_opts,
+			 struct option const long_opts[],
+			 const char * const opts_help[])
 {
 	FILE *fp = errmsg ? stderr : stdout;
 	const char a_arg[] = "<arg>";

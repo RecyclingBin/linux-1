@@ -20,7 +20,8 @@
 #include "digital.h"
 
 #define DIGITAL_PROTO_NFCA_RF_TECH \
-	(NFC_PROTO_JEWEL_MASK | NFC_PROTO_MIFARE_MASK | NFC_PROTO_NFC_DEP_MASK)
+	(NFC_PROTO_JEWEL_MASK | NFC_PROTO_MIFARE_MASK | \
+	NFC_PROTO_NFC_DEP_MASK | NFC_PROTO_ISO14443_MASK)
 
 #define DIGITAL_PROTO_NFCB_RF_TECH	NFC_PROTO_ISO14443_B_MASK
 
@@ -28,6 +29,9 @@
 	(NFC_PROTO_FELICA_MASK | NFC_PROTO_NFC_DEP_MASK)
 
 #define DIGITAL_PROTO_ISO15693_RF_TECH	NFC_PROTO_ISO15693_MASK
+
+/* Delay between each poll frame (ms) */
+#define DIGITAL_POLL_INTERVAL 10
 
 struct digital_cmd {
 	struct list_head queue;
@@ -70,8 +74,8 @@ void digital_skb_add_crc(struct sk_buff *skb, crc_func_t crc_func, u16 init,
 	if (msb_first)
 		crc = __fswab16(crc);
 
-	*skb_put(skb, 1) = crc & 0xFF;
-	*skb_put(skb, 1) = (crc >> 8) & 0xFF;
+	skb_put_u8(skb, crc & 0xFF);
+	skb_put_u8(skb, (crc >> 8) & 0xFF);
 }
 
 int digital_skb_check_crc(struct sk_buff *skb, crc_func_t crc_func,
@@ -172,6 +176,8 @@ static void digital_wq_cmd(struct work_struct *work)
 		return;
 	}
 
+	cmd->pending = 1;
+
 	mutex_unlock(&ddev->cmd_lock);
 
 	if (cmd->req)
@@ -198,6 +204,11 @@ static void digital_wq_cmd(struct work_struct *work)
 		params = cmd->mdaa_params;
 
 		rc = ddev->ops->tg_listen_mdaa(ddev, params, cmd->timeout,
+					       digital_send_cmd_complete, cmd);
+		break;
+
+	case DIGITAL_CMD_TG_LISTEN_MD:
+		rc = ddev->ops->tg_listen_md(ddev, cmd->timeout,
 					       digital_send_cmd_complete, cmd);
 		break;
 
@@ -229,7 +240,7 @@ int digital_send_cmd(struct nfc_digital_dev *ddev, u8 cmd_type,
 {
 	struct digital_cmd *cmd;
 
-	cmd = kzalloc(sizeof(struct digital_cmd), GFP_KERNEL);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
@@ -276,7 +287,7 @@ static int digital_tg_listen_mdaa(struct nfc_digital_dev *ddev, u8 rf_tech)
 {
 	struct digital_tg_mdaa_params *params;
 
-	params = kzalloc(sizeof(struct digital_tg_mdaa_params), GFP_KERNEL);
+	params = kzalloc(sizeof(*params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -293,12 +304,19 @@ static int digital_tg_listen_mdaa(struct nfc_digital_dev *ddev, u8 rf_tech)
 				500, digital_tg_recv_atr_req, NULL);
 }
 
+static int digital_tg_listen_md(struct nfc_digital_dev *ddev, u8 rf_tech)
+{
+	return digital_send_cmd(ddev, DIGITAL_CMD_TG_LISTEN_MD, NULL, NULL, 500,
+				digital_tg_recv_md_req, NULL);
+}
+
 int digital_target_found(struct nfc_digital_dev *ddev,
 			 struct nfc_target *target, u8 protocol)
 {
 	int rc;
 	u8 framing;
 	u8 rf_tech;
+	u8 poll_tech_count;
 	int (*check_crc)(struct sk_buff *skb);
 	void (*add_crc)(struct sk_buff *skb);
 
@@ -375,11 +393,15 @@ int digital_target_found(struct nfc_digital_dev *ddev,
 		return rc;
 
 	target->supported_protocols = (1 << protocol);
-	rc = nfc_targets_found(ddev->nfc_dev, target, 1);
-	if (rc)
-		return rc;
 
+	poll_tech_count = ddev->poll_tech_count;
 	ddev->poll_tech_count = 0;
+
+	rc = nfc_targets_found(ddev->nfc_dev, target, 1);
+	if (rc) {
+		ddev->poll_tech_count = poll_tech_count;
+		return rc;
+	}
 
 	return 0;
 }
@@ -402,7 +424,8 @@ void digital_poll_next_tech(struct nfc_digital_dev *ddev)
 
 	mutex_unlock(&ddev->poll_lock);
 
-	schedule_work(&ddev->poll_work);
+	schedule_delayed_work(&ddev->poll_work,
+			      msecs_to_jiffies(DIGITAL_POLL_INTERVAL));
 }
 
 static void digital_wq_poll(struct work_struct *work)
@@ -411,7 +434,7 @@ static void digital_wq_poll(struct work_struct *work)
 	struct digital_poll_tech *poll_tech;
 	struct nfc_digital_dev *ddev = container_of(work,
 						    struct nfc_digital_dev,
-						    poll_work);
+						    poll_work.work);
 	mutex_lock(&ddev->poll_lock);
 
 	if (!ddev->poll_tech_count) {
@@ -505,6 +528,9 @@ static int digital_start_poll(struct nfc_dev *nfc_dev, __u32 im_protocols,
 		if (ddev->ops->tg_listen_mdaa) {
 			digital_add_poll_tech(ddev, 0,
 					      digital_tg_listen_mdaa);
+		} else if (ddev->ops->tg_listen_md) {
+			digital_add_poll_tech(ddev, 0,
+					      digital_tg_listen_md);
 		} else {
 			digital_add_poll_tech(ddev, NFC_DIGITAL_RF_TECH_106A,
 					      digital_tg_listen_nfca);
@@ -523,7 +549,7 @@ static int digital_start_poll(struct nfc_dev *nfc_dev, __u32 im_protocols,
 		return -EINVAL;
 	}
 
-	schedule_work(&ddev->poll_work);
+	schedule_delayed_work(&ddev->poll_work, 0);
 
 	return 0;
 }
@@ -544,7 +570,7 @@ static void digital_stop_poll(struct nfc_dev *nfc_dev)
 
 	mutex_unlock(&ddev->poll_lock);
 
-	cancel_work_sync(&ddev->poll_work);
+	cancel_delayed_work_sync(&ddev->poll_work);
 
 	digital_abort_cmd(ddev);
 }
@@ -586,6 +612,8 @@ static int digital_dep_link_down(struct nfc_dev *nfc_dev)
 {
 	struct nfc_digital_dev *ddev = nfc_get_drvdata(nfc_dev);
 
+	digital_abort_cmd(ddev);
+
 	ddev->curr_protocol = 0;
 
 	return 0;
@@ -612,7 +640,8 @@ static int digital_activate_target(struct nfc_dev *nfc_dev,
 }
 
 static void digital_deactivate_target(struct nfc_dev *nfc_dev,
-				      struct nfc_target *target)
+				      struct nfc_target *target,
+				      u8 mode)
 {
 	struct nfc_digital_dev *ddev = nfc_get_drvdata(nfc_dev);
 
@@ -621,6 +650,7 @@ static void digital_deactivate_target(struct nfc_dev *nfc_dev,
 		return;
 	}
 
+	digital_abort_cmd(ddev);
 	ddev->curr_protocol = 0;
 }
 
@@ -677,11 +707,9 @@ static int digital_in_send(struct nfc_dev *nfc_dev, struct nfc_target *target,
 	struct digital_data_exch *data_exch;
 	int rc;
 
-	data_exch = kzalloc(sizeof(struct digital_data_exch), GFP_KERNEL);
-	if (!data_exch) {
-		pr_err("Failed to allocate data_exch struct\n");
+	data_exch = kzalloc(sizeof(*data_exch), GFP_KERNEL);
+	if (!data_exch)
 		return -ENOMEM;
-	}
 
 	data_exch->cb = cb;
 	data_exch->cb_context = cb_context;
@@ -732,10 +760,10 @@ struct nfc_digital_dev *nfc_digital_allocate_device(struct nfc_digital_ops *ops,
 
 	if (!ops->in_configure_hw || !ops->in_send_cmd || !ops->tg_listen ||
 	    !ops->tg_configure_hw || !ops->tg_send_cmd || !ops->abort_cmd ||
-	    !ops->switch_rf)
+	    !ops->switch_rf || (ops->tg_listen_md && !ops->tg_get_rf_tech))
 		return NULL;
 
-	ddev = kzalloc(sizeof(struct nfc_digital_dev), GFP_KERNEL);
+	ddev = kzalloc(sizeof(*ddev), GFP_KERNEL);
 	if (!ddev)
 		return NULL;
 
@@ -749,7 +777,7 @@ struct nfc_digital_dev *nfc_digital_allocate_device(struct nfc_digital_ops *ops,
 	INIT_WORK(&ddev->cmd_complete_work, digital_wq_cmd_complete);
 
 	mutex_init(&ddev->poll_lock);
-	INIT_WORK(&ddev->poll_work, digital_wq_poll);
+	INIT_DELAYED_WORK(&ddev->poll_work, digital_wq_poll);
 
 	if (supported_protocols & NFC_PROTO_JEWEL_MASK)
 		ddev->protocols |= NFC_PROTO_JEWEL_MASK;
@@ -811,12 +839,20 @@ void nfc_digital_unregister_device(struct nfc_digital_dev *ddev)
 	ddev->poll_tech_count = 0;
 	mutex_unlock(&ddev->poll_lock);
 
-	cancel_work_sync(&ddev->poll_work);
+	cancel_delayed_work_sync(&ddev->poll_work);
 	cancel_work_sync(&ddev->cmd_work);
 	cancel_work_sync(&ddev->cmd_complete_work);
 
 	list_for_each_entry_safe(cmd, n, &ddev->cmd_queue, queue) {
 		list_del(&cmd->queue);
+
+		/* Call the command callback if any and pass it a ENODEV error.
+		 * This gives a chance to the command issuer to free any
+		 * allocated buffer.
+		 */
+		if (cmd->cmd_cb)
+			cmd->cmd_cb(ddev, cmd->cb_context, ERR_PTR(-ENODEV));
+
 		kfree(cmd->mdaa_params);
 		kfree(cmd);
 	}

@@ -15,7 +15,8 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/slab.h>
 #include <linux/io.h>
@@ -23,6 +24,9 @@
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/clk/ti.h>
+
+#include "clock.h"
 
 #define DRA7_ATL_INSTANCES	4
 
@@ -139,9 +143,13 @@ static long atl_clk_round_rate(struct clk_hw *hw, unsigned long rate,
 static int atl_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 			    unsigned long parent_rate)
 {
-	struct dra7_atl_desc *cdesc = to_atl_desc(hw);
+	struct dra7_atl_desc *cdesc;
 	u32 divider;
 
+	if (!hw || !rate)
+		return -EINVAL;
+
+	cdesc = to_atl_desc(hw);
 	divider = ((parent_rate + rate / 2) / rate) - 1;
 	if (divider > DRA7_ATL_DIVIDER_MASK)
 		divider = DRA7_ATL_DIVIDER_MASK;
@@ -151,7 +159,7 @@ static int atl_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-const struct clk_ops atl_clk_ops = {
+static const struct clk_ops atl_clk_ops = {
 	.enable		= atl_clk_enable,
 	.disable	= atl_clk_disable,
 	.is_enabled	= atl_clk_is_enabled,
@@ -163,9 +171,10 @@ const struct clk_ops atl_clk_ops = {
 static void __init of_dra7_atl_clock_setup(struct device_node *node)
 {
 	struct dra7_atl_desc *clk_hw = NULL;
-	struct clk_init_data init = { 0 };
+	struct clk_init_data init = { NULL };
 	const char **parent_names = NULL;
 	struct clk *clk;
+	int ret;
 
 	clk_hw = kzalloc(sizeof(*clk_hw), GFP_KERNEL);
 	if (!clk_hw) {
@@ -181,8 +190,8 @@ static void __init of_dra7_atl_clock_setup(struct device_node *node)
 	init.num_parents = of_clk_get_parent_count(node);
 
 	if (init.num_parents != 1) {
-		pr_err("%s: atl clock %s must have 1 parent\n", __func__,
-		       node->name);
+		pr_err("%s: atl clock %pOFn must have 1 parent\n", __func__,
+		       node);
 		goto cleanup;
 	}
 
@@ -195,10 +204,16 @@ static void __init of_dra7_atl_clock_setup(struct device_node *node)
 
 	init.parent_names = parent_names;
 
-	clk = clk_register(NULL, &clk_hw->hw);
+	clk = ti_clk_register(NULL, &clk_hw->hw, node->name);
 
 	if (!IS_ERR(clk)) {
+		ret = ti_clk_add_alias(NULL, clk, node->name);
+		if (ret) {
+			clk_unregister(clk);
+			goto cleanup;
+		}
 		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+		kfree(parent_names);
 		return;
 	}
 cleanup:
@@ -224,6 +239,7 @@ static int of_dra7_atl_clk_probe(struct platform_device *pdev)
 	cinfo->iobase = of_iomap(node, 0);
 	cinfo->dev = &pdev->dev;
 	pm_runtime_enable(cinfo->dev);
+	pm_runtime_irq_safe(cinfo->dev);
 
 	pm_runtime_get_sync(cinfo->dev);
 	atl_write(cinfo, DRA7_ATL_PCLKMUX_REG(0), DRA7_ATL_PCLKMUX);
@@ -246,6 +262,11 @@ static int of_dra7_atl_clk_probe(struct platform_device *pdev)
 		}
 
 		clk = of_clk_get_from_provider(&clkspec);
+		if (IS_ERR(clk)) {
+			pr_err("%s: failed to get atl clock %d from provider\n",
+			       __func__, i);
+			return PTR_ERR(clk);
+		}
 
 		cdesc = to_atl_desc(__clk_get_hw(clk));
 		cdesc->cinfo = cinfo;
@@ -253,7 +274,7 @@ static int of_dra7_atl_clk_probe(struct platform_device *pdev)
 
 		/* Get configuration for the ATL instances */
 		snprintf(prop, sizeof(prop), "atl%u", i);
-		cfg_node = of_find_node_by_name(node, prop);
+		cfg_node = of_get_child_by_name(node, prop);
 		if (cfg_node) {
 			ret = of_property_read_u32(cfg_node, "bws",
 						   &cdesc->bws);
@@ -266,6 +287,7 @@ static int of_dra7_atl_clk_probe(struct platform_device *pdev)
 				atl_write(cinfo, DRA7_ATL_AWSMUX_REG(i),
 					  cdesc->aws);
 			}
+			of_node_put(cfg_node);
 		}
 
 		cdesc->probed = true;
@@ -281,32 +303,17 @@ static int of_dra7_atl_clk_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int of_dra7_atl_clk_remove(struct platform_device *pdev)
-{
-	pm_runtime_disable(&pdev->dev);
-
-	return 0;
-}
-
-static struct of_device_id of_dra7_atl_clk_match_tbl[] = {
+static const struct of_device_id of_dra7_atl_clk_match_tbl[] = {
 	{ .compatible = "ti,dra7-atl", },
 	{},
 };
-MODULE_DEVICE_TABLE(of, of_dra7_atl_clk_match_tbl);
 
 static struct platform_driver dra7_atl_clk_driver = {
 	.driver = {
 		.name = "dra7-atl",
-		.owner = THIS_MODULE,
+		.suppress_bind_attrs = true,
 		.of_match_table = of_dra7_atl_clk_match_tbl,
 	},
 	.probe = of_dra7_atl_clk_probe,
-	.remove = of_dra7_atl_clk_remove,
 };
-
-module_platform_driver(dra7_atl_clk_driver);
-
-MODULE_DESCRIPTION("Clock driver for DRA7 Audio Tracking Logic");
-MODULE_ALIAS("platform:dra7-atl-clock");
-MODULE_AUTHOR("Peter Ujfalusi <peter.ujfalusi@ti.com>");
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(dra7_atl_clk_driver);

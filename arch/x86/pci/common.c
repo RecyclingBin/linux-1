@@ -12,7 +12,6 @@
 #include <linux/dmi.h>
 #include <linux/slab.h>
 
-#include <asm-generic/pci-bridge.h>
 #include <asm/acpi.h>
 #include <asm/segment.h>
 #include <asm/io.h>
@@ -23,9 +22,7 @@
 unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2 |
 				PCI_PROBE_MMCONF;
 
-unsigned int pci_early_dump_regs;
 static int pci_bf_sort;
-static int smbios_type_b1_flag;
 int pci_routeirq;
 int noioapicquirk;
 #ifdef CONFIG_X86_REROUTE_FOR_BROKEN_BOOT_IRQS
@@ -76,19 +73,19 @@ struct pci_ops pci_root_ops = {
 };
 
 /*
- * This interrupt-safe spinlock protects all accesses to PCI
- * configuration space.
+ * This interrupt-safe spinlock protects all accesses to PCI configuration
+ * space, except for the mmconfig (ECAM) based operations.
  */
 DEFINE_RAW_SPINLOCK(pci_config_lock);
 
-static int can_skip_ioresource_align(const struct dmi_system_id *d)
+static int __init can_skip_ioresource_align(const struct dmi_system_id *d)
 {
 	pci_probe |= PCI_CAN_SKIP_ISA_ALIGN;
 	printk(KERN_INFO "PCI: %s detected, can skip ISA alignment\n", d->ident);
 	return 0;
 }
 
-static const struct dmi_system_id can_skip_pciprobe_dmi_table[] = {
+static const struct dmi_system_id can_skip_pciprobe_dmi_table[] __initconst = {
 /*
  * Systems where PCI IO resource ISA alignment can be skipped
  * when the ISA enable bit in the bridge control is not set
@@ -134,7 +131,7 @@ static void pcibios_fixup_device_resources(struct pci_dev *dev)
 	if (pci_probe & PCI_NOASSIGN_BARS) {
 		/*
 		* If the BIOS did not assign the BAR, zero out the
-		* resource so the kernel doesn't attmept to assign
+		* resource so the kernel doesn't attempt to assign
 		* it later on in pci_assign_unassigned_resources
 		*/
 		for (bar = 0; bar <= PCI_STD_RESOURCE_END; bar++) {
@@ -186,7 +183,7 @@ void pcibios_remove_bus(struct pci_bus *bus)
  * on the kernel command line (which was parsed earlier).
  */
 
-static int set_bf_sort(const struct dmi_system_id *d)
+static int __init set_bf_sort(const struct dmi_system_id *d)
 {
 	if (pci_bf_sort == pci_bf_sort_default) {
 		pci_bf_sort = pci_dmi_bf;
@@ -195,44 +192,28 @@ static int set_bf_sort(const struct dmi_system_id *d)
 	return 0;
 }
 
-static void read_dmi_type_b1(const struct dmi_header *dm,
-				       void *private_data)
+static void __init read_dmi_type_b1(const struct dmi_header *dm,
+				    void *private_data)
 {
-	u8 *d = (u8 *)dm + 4;
+	u8 *data = (u8 *)dm + 4;
 
 	if (dm->type != 0xB1)
 		return;
-	switch (((*(u32 *)d) >> 9) & 0x03) {
-	case 0x00:
-		printk(KERN_INFO "dmi type 0xB1 record - unknown flag\n");
-		break;
-	case 0x01: /* set pci=bfsort */
-		smbios_type_b1_flag = 1;
-		break;
-	case 0x02: /* do not set pci=bfsort */
-		smbios_type_b1_flag = 2;
-		break;
-	default:
-		break;
-	}
+	if ((((*(u32 *)data) >> 9) & 0x03) == 0x01)
+		set_bf_sort((const struct dmi_system_id *)private_data);
 }
 
-static int find_sort_method(const struct dmi_system_id *d)
+static int __init find_sort_method(const struct dmi_system_id *d)
 {
-	dmi_walk(read_dmi_type_b1, NULL);
-
-	if (smbios_type_b1_flag == 1) {
-		set_bf_sort(d);
-		return 0;
-	}
-	return -1;
+	dmi_walk(read_dmi_type_b1, (void *)d);
+	return 0;
 }
 
 /*
  * Enable renumbering of PCI bus# ranges to reach all PCI busses (Cardbus)
  */
 #ifdef __i386__
-static int assign_all_busses(const struct dmi_system_id *d)
+static int __init assign_all_busses(const struct dmi_system_id *d)
 {
 	pci_probe |= PCI_ASSIGN_ALL_BUSSES;
 	printk(KERN_INFO "%s detected: enabling PCI bus# renumbering"
@@ -241,7 +222,7 @@ static int assign_all_busses(const struct dmi_system_id *d)
 }
 #endif
 
-static int set_scan_all(const struct dmi_system_id *d)
+static int __init set_scan_all(const struct dmi_system_id *d)
 {
 	printk(KERN_INFO "PCI: %s detected, enabling pci=pcie_scan_all\n",
 	       d->ident);
@@ -249,7 +230,7 @@ static int set_scan_all(const struct dmi_system_id *d)
 	return 0;
 }
 
-static const struct dmi_system_id pciprobe_dmi_table[] = {
+static const struct dmi_system_id pciprobe_dmi_table[] __initconst = {
 #ifdef __i386__
 /*
  * Laptops which need pci=assign-busses to see Cardbus cards
@@ -448,6 +429,22 @@ static const struct dmi_system_id pciprobe_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "ftServer"),
 		},
 	},
+        {
+                .callback = set_scan_all,
+                .ident = "Stratus/NEC ftServer",
+                .matches = {
+                        DMI_MATCH(DMI_SYS_VENDOR, "NEC"),
+                        DMI_MATCH(DMI_PRODUCT_NAME, "Express5800/R32"),
+                },
+        },
+        {
+                .callback = set_scan_all,
+                .ident = "Stratus/NEC ftServer",
+                .matches = {
+                        DMI_MATCH(DMI_SYS_VENDOR, "NEC"),
+                        DMI_MATCH(DMI_PRODUCT_NAME, "Express5800/R31"),
+                },
+        },
 	{}
 };
 
@@ -474,7 +471,9 @@ void pcibios_scan_root(int busnum)
 	if (!bus) {
 		pci_free_resource_list(&resources);
 		kfree(sd);
+		return;
 	}
+	pci_bus_add_devices(bus);
 }
 
 void __init pcibios_set_cache_line_size(void)
@@ -499,7 +498,7 @@ void __init pcibios_set_cache_line_size(void)
 
 int __init pcibios_init(void)
 {
-	if (!raw_pci_ops) {
+	if (!raw_pci_ops && !raw_pci_ext_ops) {
 		printk(KERN_WARNING "PCI: System does not support PCI\n");
 		return 0;
 	}
@@ -512,7 +511,7 @@ int __init pcibios_init(void)
 	return 0;
 }
 
-char * __init pcibios_setup(char *str)
+char *__init pcibios_setup(char *str)
 {
 	if (!strcmp(str, "off")) {
 		pci_probe = 0;
@@ -594,9 +593,11 @@ char * __init pcibios_setup(char *str)
 	} else if (!strcmp(str, "nocrs")) {
 		pci_probe |= PCI_ROOT_NO_CRS;
 		return NULL;
-	} else if (!strcmp(str, "earlydump")) {
-		pci_early_dump_regs = 1;
+#ifdef CONFIG_PHYS_ADDR_T_64BIT
+	} else if (!strcmp(str, "big_root_window")) {
+		pci_probe |= PCI_BIG_ROOT_WINDOW;
 		return NULL;
+#endif
 	} else if (!strcmp(str, "routeirq")) {
 		pci_routeirq = 1;
 		return NULL;
@@ -623,6 +624,49 @@ unsigned int pcibios_assign_all_busses(void)
 	return (pci_probe & PCI_ASSIGN_ALL_BUSSES) ? 1 : 0;
 }
 
+#if defined(CONFIG_X86_DEV_DMA_OPS) && defined(CONFIG_PCI_DOMAINS)
+static LIST_HEAD(dma_domain_list);
+static DEFINE_SPINLOCK(dma_domain_list_lock);
+
+void add_dma_domain(struct dma_domain *domain)
+{
+	spin_lock(&dma_domain_list_lock);
+	list_add(&domain->node, &dma_domain_list);
+	spin_unlock(&dma_domain_list_lock);
+}
+EXPORT_SYMBOL_GPL(add_dma_domain);
+
+void del_dma_domain(struct dma_domain *domain)
+{
+	spin_lock(&dma_domain_list_lock);
+	list_del(&domain->node);
+	spin_unlock(&dma_domain_list_lock);
+}
+EXPORT_SYMBOL_GPL(del_dma_domain);
+
+static void set_dma_domain_ops(struct pci_dev *pdev)
+{
+	struct dma_domain *domain;
+
+	spin_lock(&dma_domain_list_lock);
+	list_for_each_entry(domain, &dma_domain_list, node) {
+		if (pci_domain_nr(pdev->bus) == domain->domain_nr) {
+			pdev->dev.dma_ops = domain->dma_ops;
+			break;
+		}
+	}
+	spin_unlock(&dma_domain_list_lock);
+}
+#else
+static void set_dma_domain_ops(struct pci_dev *pdev) {}
+#endif
+
+static void set_dev_domain_options(struct pci_dev *pdev)
+{
+	if (is_vmd(pdev->bus))
+		pdev->hotplug_user_indicators = 1;
+}
+
 int pcibios_add_device(struct pci_dev *dev)
 {
 	struct setup_data *data;
@@ -631,7 +675,7 @@ int pcibios_add_device(struct pci_dev *dev)
 
 	pa_data = boot_params.hdr.setup_data;
 	while (pa_data) {
-		data = ioremap(pa_data, sizeof(*rom));
+		data = memremap(pa_data, sizeof(*rom), MEMREMAP_WB);
 		if (!data)
 			return -ENOMEM;
 
@@ -650,8 +694,10 @@ int pcibios_add_device(struct pci_dev *dev)
 			}
 		}
 		pa_data = data->next;
-		iounmap(data);
+		memunmap(data);
 	}
+	set_dma_domain_ops(dev);
+	set_dev_domain_options(dev);
 	return 0;
 }
 
@@ -672,6 +718,15 @@ void pcibios_disable_device (struct pci_dev *dev)
 	if (!pci_dev_msi_enabled(dev) && pcibios_disable_irq)
 		pcibios_disable_irq(dev);
 }
+
+#ifdef CONFIG_ACPI_HOTPLUG_IOAPIC
+void pcibios_release_device(struct pci_dev *dev)
+{
+	if (atomic_dec_return(&dev->enable_cnt) >= 0)
+		pcibios_disable_device(dev);
+
+}
+#endif
 
 int pci_ext_cfg_avail(void)
 {

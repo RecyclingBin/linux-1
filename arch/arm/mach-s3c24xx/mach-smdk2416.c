@@ -1,15 +1,9 @@
-/* linux/arch/arm/mach-s3c2416/mach-hanlin_v3c.c
- *
- * Copyright (c) 2009 Yauhen Kharuzhy <jekhor@gmail.com>,
- *	as part of OpenInkpot project
- * Copyright (c) 2009 Promwad Innovation Company
- *	Yauhen Kharuzhy <yauhen.kharuzhy@promwad.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2009 Yauhen Kharuzhy <jekhor@gmail.com>,
+//	as part of OpenInkpot project
+// Copyright (c) 2009 Promwad Innovation Company
+//	Yauhen Kharuzhy <yauhen.kharuzhy@promwad.com>
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -44,7 +38,6 @@
 #include <linux/platform_data/i2c-s3c2410.h>
 
 #include <plat/gpio-cfg.h>
-#include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <linux/platform_data/mtd-nand-s3c2410.h>
@@ -263,5 +256,4 @@ MACHINE_START(SMDK2416, "SMDK2416")
 	.map_io		= smdk2416_map_io,
 	.init_machine	= smdk2416_machine_init,
 	.init_time	= smdk2416_init_time,
-	.restart	= s3c2416_restart,
 MACHINE_END

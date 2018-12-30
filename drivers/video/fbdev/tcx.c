@@ -467,8 +467,8 @@ static int tcx_probe(struct platform_device *op)
 
 	dev_set_drvdata(&op->dev, info);
 
-	printk(KERN_INFO "%s: TCX at %lx:%lx, %s\n",
-	       dp->full_name,
+	printk(KERN_INFO "%pOF: TCX at %lx:%lx, %s\n",
+	       dp,
 	       par->which_io,
 	       info->fix.smem_start,
 	       par->lowdepth ? "8-bit only" : "24-bit depth");
@@ -512,7 +512,6 @@ MODULE_DEVICE_TABLE(of, tcx_match);
 static struct platform_driver tcx_driver = {
 	.driver = {
 		.name = "tcx",
-		.owner = THIS_MODULE,
 		.of_match_table = tcx_match,
 	},
 	.probe		= tcx_probe,

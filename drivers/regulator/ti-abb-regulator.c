@@ -532,13 +532,13 @@ static int ti_abb_init_table(struct device *dev, struct ti_abb *abb,
 	}
 	num_entries /= num_values;
 
-	info = devm_kzalloc(dev, sizeof(*info) * num_entries, GFP_KERNEL);
+	info = devm_kcalloc(dev, num_entries, sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	abb->info = info;
 
-	volt_table = devm_kzalloc(dev, sizeof(unsigned int) * num_entries,
+	volt_table = devm_kcalloc(dev, num_entries, sizeof(unsigned int),
 				  GFP_KERNEL);
 	if (!volt_table)
 		return -ENOMEM;
@@ -837,7 +837,8 @@ skip_opt:
 		return -EINVAL;
 	}
 
-	initdata = of_get_regulator_init_data(dev, pdev->dev.of_node);
+	initdata = of_get_regulator_init_data(dev, pdev->dev.of_node,
+					      &abb->rdesc);
 	if (!initdata) {
 		dev_err(dev, "%s: Unable to alloc regulator init data\n",
 			__func__);
@@ -891,7 +892,6 @@ static struct platform_driver ti_abb_driver = {
 	.probe = ti_abb_probe,
 	.driver = {
 		   .name = "ti_abb",
-		   .owner = THIS_MODULE,
 		   .of_match_table = of_match_ptr(ti_abb_of_match),
 		   },
 };

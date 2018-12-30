@@ -158,9 +158,9 @@ found:
 	return s;
 }
 
-static void atalk_destroy_timer(unsigned long data)
+static void atalk_destroy_timer(struct timer_list *t)
 {
-	struct sock *sk = (struct sock *)data;
+	struct sock *sk = from_timer(sk, t, sk_timer);
 
 	if (sk_has_allocations(sk)) {
 		sk->sk_timer.expires = jiffies + SOCK_DESTROY_TIME;
@@ -175,8 +175,7 @@ static inline void atalk_destroy_socket(struct sock *sk)
 	skb_queue_purge(&sk->sk_receive_queue);
 
 	if (sk_has_allocations(sk)) {
-		setup_timer(&sk->sk_timer, atalk_destroy_timer,
-				(unsigned long)sk);
+		timer_setup(&sk->sk_timer, atalk_destroy_timer, 0);
 		sk->sk_timer.expires	= jiffies + SOCK_DESTROY_TIME;
 		add_timer(&sk->sk_timer);
 	} else
@@ -1030,7 +1029,7 @@ static int atalk_create(struct net *net, struct socket *sock, int protocol,
 	if (sock->type != SOCK_RAW && sock->type != SOCK_DGRAM)
 		goto out;
 	rc = -ENOMEM;
-	sk = sk_alloc(net, PF_APPLETALK, GFP_KERNEL, &ddp_proto);
+	sk = sk_alloc(net, PF_APPLETALK, GFP_KERNEL, &ddp_proto, kern);
 	if (!sk)
 		goto out;
 	rc = 0;
@@ -1239,7 +1238,7 @@ out:
  * fields into the sockaddr.
  */
 static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
-			 int *uaddr_len, int peer)
+			 int peer)
 {
 	struct sockaddr_at sat;
 	struct sock *sk = sock->sk;
@@ -1252,7 +1251,6 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
 		if (atalk_autobind(sk) < 0)
 			goto out;
 
-	*uaddr_len = sizeof(struct sockaddr_at);
 	memset(&sat, 0, sizeof(sat));
 
 	if (peer) {
@@ -1269,16 +1267,16 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
 		sat.sat_port	    = at->src_port;
 	}
 
-	err = 0;
 	sat.sat_family = AF_APPLETALK;
 	memcpy(uaddr, &sat, sizeof(sat));
+	err = sizeof(struct sockaddr_at);
 
 out:
 	release_sock(sk);
 	return err;
 }
 
-#if defined(CONFIG_IPDDP) || defined(CONFIG_IPDDP_MODULE)
+#if IS_ENABLED(CONFIG_IPDDP)
 static __inline__ int is_ip_over_ddp(struct sk_buff *skb)
 {
 	return skb->data[12] == 22;
@@ -1489,8 +1487,6 @@ static int atalk_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto drop;
 
 	/* Queue packet (standard) */
-	skb->sk = sock;
-
 	if (sock_queue_rcv_skb(sock, skb) < 0)
 		goto drop;
 
@@ -1531,7 +1527,7 @@ static int ltalk_rcv(struct sk_buff *skb, struct net_device *dev,
 		 * The push leaves us with a ddephdr not an shdr, and
 		 * handily the port bytes in the right place preset.
 		 */
-		ddp = (struct ddpehdr *) skb_push(skb, sizeof(*ddp) - 4);
+		ddp = skb_push(skb, sizeof(*ddp) - 4);
 
 		/* Now fill in the long header */
 
@@ -1561,8 +1557,7 @@ freeit:
 	return 0;
 }
 
-static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
-			 size_t len)
+static int atalk_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 {
 	struct sock *sk = sock->sk;
 	struct atalk_sock *at = at_sk(sk);
@@ -1628,7 +1623,7 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 
 		rt = atrtr_find(&at_hint);
 	}
-	err = ENETUNREACH;
+	err = -ENETUNREACH;
 	if (!rt)
 		goto out;
 
@@ -1644,14 +1639,13 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 	if (!skb)
 		goto out;
 
-	skb->sk = sk;
 	skb_reserve(skb, ddp_dl->header_length);
 	skb_reserve(skb, dev->hard_header_len);
 	skb->dev = dev;
 
 	SOCK_DEBUG(sk, "SK %p: Begin build.\n", sk);
 
-	ddp = (struct ddpehdr *)skb_put(skb, sizeof(struct ddpehdr));
+	ddp = skb_put(skb, sizeof(struct ddpehdr));
 	ddp->deh_len_hops  = htons(len + sizeof(*ddp));
 	ddp->deh_dnet  = usat->sat_addr.s_net;
 	ddp->deh_snet  = at->src_net;
@@ -1660,9 +1654,9 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 	ddp->deh_dport = usat->sat_port;
 	ddp->deh_sport = at->src_port;
 
-	SOCK_DEBUG(sk, "SK %p: Copy user data (%Zd bytes).\n", sk, len);
+	SOCK_DEBUG(sk, "SK %p: Copy user data (%zd bytes).\n", sk, len);
 
-	err = memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len);
+	err = memcpy_from_msg(skb_put(skb, len), msg, len);
 	if (err) {
 		kfree_skb(skb);
 		err = -EFAULT;
@@ -1724,15 +1718,15 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 		 */
 		aarp_send_ddp(dev, skb, &usat->sat_addr, NULL);
 	}
-	SOCK_DEBUG(sk, "SK %p: Done write (%Zd).\n", sk, len);
+	SOCK_DEBUG(sk, "SK %p: Done write (%zd).\n", sk, len);
 
 out:
 	release_sock(sk);
 	return err ? : len;
 }
 
-static int atalk_recvmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
-			 size_t size, int flags)
+static int atalk_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
+			 int flags)
 {
 	struct sock *sk = sock->sk;
 	struct ddpehdr *ddp;
@@ -1761,7 +1755,7 @@ static int atalk_recvmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 		copied = size;
 		msg->msg_flags |= MSG_TRUNC;
 	}
-	err = skb_copy_datagram_iovec(skb, offset, msg->msg_iov, copied);
+	err = skb_copy_datagram_msg(skb, offset, msg, copied);
 
 	if (!err && msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_at *, sat, msg->msg_name);
@@ -1808,7 +1802,7 @@ static int atalk_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		long amount = 0;
 
 		if (skb)
-		amount = skb->len - sizeof(struct ddpehdr);
+			amount = skb->len - sizeof(struct ddpehdr);
 		rc = put_user(amount, (int __user *)argp);
 		break;
 	}

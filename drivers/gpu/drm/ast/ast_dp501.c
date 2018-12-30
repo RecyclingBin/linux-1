@@ -1,19 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include <linux/firmware.h>
 #include <drm/drmP.h>
 #include "ast_drv.h"
 MODULE_FIRMWARE("ast_dp501_fw.bin");
 
-int ast_load_dp501_microcode(struct drm_device *dev)
+static int ast_load_dp501_microcode(struct drm_device *dev)
 {
 	struct ast_private *ast = dev->dev_private;
-	static char *fw_name = "ast_dp501_fw.bin";
-	int err;
-	err = request_firmware(&ast->dp501_fw, fw_name, dev->dev);
-	if (err)
-		return err;
 
-	return 0;
+	return request_firmware(&ast->dp501_fw, "ast_dp501_fw.bin", dev->dev);
 }
 
 static void send_ack(struct ast_private *ast)
@@ -187,7 +183,7 @@ bool ast_backup_fw(struct drm_device *dev, u8 *addr, u32 size)
 	return false;
 }
 
-bool ast_launch_m68k(struct drm_device *dev)
+static bool ast_launch_m68k(struct drm_device *dev)
 {
 	struct ast_private *ast = dev->dev_private;
 	u32 i, data, len = 0;
@@ -201,7 +197,11 @@ bool ast_launch_m68k(struct drm_device *dev)
 		if (ast->dp501_fw_addr) {
 			fw_addr = ast->dp501_fw_addr;
 			len = 32*1024;
-		} else if (ast->dp501_fw) {
+		} else {
+			if (!ast->dp501_fw &&
+			    ast_load_dp501_microcode(dev) < 0)
+				return false;
+
 			fw_addr = (u8 *)ast->dp501_fw->data;
 			len = ast->dp501_fw->size;
 		}
@@ -379,11 +379,39 @@ static bool ast_init_dvo(struct drm_device *dev)
 	return true;
 }
 
+
+static void ast_init_analog(struct drm_device *dev)
+{
+	struct ast_private *ast = dev->dev_private;
+	u32 data;
+
+	/*
+	 * Set DAC source to VGA mode in SCU2C via the P2A
+	 * bridge. First configure the P2U to target the SCU
+	 * in case it isn't at this stage.
+	 */
+	ast_write32(ast, 0xf004, 0x1e6e0000);
+	ast_write32(ast, 0xf000, 0x1);
+
+	/* Then unlock the SCU with the magic password */
+	ast_write32(ast, 0x12000, 0x1688a8a8);
+	ast_write32(ast, 0x12000, 0x1688a8a8);
+	ast_write32(ast, 0x12000, 0x1688a8a8);
+
+	/* Finally, clear bits [17:16] of SCU2c */
+	data = ast_read32(ast, 0x1202c);
+	data &= 0xfffcffff;
+	ast_write32(ast, 0, data);
+
+	/* Disable DVO */
+	ast_set_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xa3, 0xcf, 0x00);
+}
+
 void ast_init_3rdtx(struct drm_device *dev)
 {
 	struct ast_private *ast = dev->dev_private;
 	u8 jreg;
-	u32 data;
+
 	if (ast->chip == AST2300 || ast->chip == AST2400) {
 		jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xd1, 0xff);
 		switch (jreg & 0x0e) {
@@ -399,12 +427,16 @@ void ast_init_3rdtx(struct drm_device *dev)
 		default:
 			if (ast->tx_chip_type == AST_TX_SIL164)
 				ast_init_dvo(dev);
-			else {
-				ast_write32(ast, 0x12000, 0x1688a8a8);
-				data = ast_read32(ast, 0x1202c);
-				data &= 0xfffcffff;
-				ast_write32(ast, 0, data);
-			}
+			else
+				ast_init_analog(dev);
 		}
 	}
+}
+
+void ast_release_firmware(struct drm_device *dev)
+{
+	struct ast_private *ast = dev->dev_private;
+
+	release_firmware(ast->dp501_fw);
+	ast->dp501_fw = NULL;
 }

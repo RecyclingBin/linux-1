@@ -19,8 +19,8 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
+#include <linux/of.h>
+#include <linux/gpio/consumer.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
@@ -192,12 +192,14 @@ static struct regulator_ops tps65090_fet_control_ops = {
 static struct regulator_ops tps65090_ldo_ops = {
 };
 
-#define tps65090_REG_DESC(_id, _sname, _en_reg, _en_bits, _ops)	\
+#define tps65090_REG_DESC(_id, _sname, _en_reg, _en_bits, _nvolt, _volt, _ops) \
 {							\
 	.name = "TPS65090_RAILS"#_id,			\
 	.supply_name = _sname,				\
 	.id = TPS65090_REGULATOR_##_id,			\
+	.n_voltages = _nvolt,				\
 	.ops = &_ops,					\
+	.fixed_uV = _volt,				\
 	.enable_reg = _en_reg,				\
 	.enable_val = _en_bits,				\
 	.enable_mask = _en_bits,			\
@@ -205,40 +207,46 @@ static struct regulator_ops tps65090_ldo_ops = {
 	.owner = THIS_MODULE,				\
 }
 
+#define tps65090_REG_FIXEDV(_id, _sname, en_reg, _en_bits, _volt, _ops) \
+	tps65090_REG_DESC(_id, _sname, en_reg, _en_bits, 1, _volt, _ops)
+
+#define tps65090_REG_SWITCH(_id, _sname, en_reg, _en_bits, _ops) \
+	tps65090_REG_DESC(_id, _sname, en_reg, _en_bits, 0, 0, _ops)
+
 static struct regulator_desc tps65090_regulator_desc[] = {
-	tps65090_REG_DESC(DCDC1, "vsys1",   0x0C, BIT(CTRL_EN_BIT),
-			  tps65090_reg_control_ops),
-	tps65090_REG_DESC(DCDC2, "vsys2",   0x0D, BIT(CTRL_EN_BIT),
-			  tps65090_reg_control_ops),
-	tps65090_REG_DESC(DCDC3, "vsys3",   0x0E, BIT(CTRL_EN_BIT),
-			  tps65090_reg_control_ops),
+	tps65090_REG_FIXEDV(DCDC1, "vsys1",   0x0C, BIT(CTRL_EN_BIT), 5000000,
+			    tps65090_reg_control_ops),
+	tps65090_REG_FIXEDV(DCDC2, "vsys2",   0x0D, BIT(CTRL_EN_BIT), 3300000,
+			    tps65090_reg_control_ops),
+	tps65090_REG_SWITCH(DCDC3, "vsys3",   0x0E, BIT(CTRL_EN_BIT),
+			    tps65090_reg_control_ops),
 
-	tps65090_REG_DESC(FET1,  "infet1",  0x0F,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET2,  "infet2",  0x10,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET3,  "infet3",  0x11,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET4,  "infet4",  0x12,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET5,  "infet5",  0x13,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET6,  "infet6",  0x14,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
-	tps65090_REG_DESC(FET7,  "infet7",  0x15,
-			  BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
-			  tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET1,  "infet1",  0x0F,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET2,  "infet2",  0x10,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET3,  "infet3",  0x11,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET4,  "infet4",  0x12,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET5,  "infet5",  0x13,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET6,  "infet6",  0x14,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
+	tps65090_REG_SWITCH(FET7,  "infet7",  0x15,
+			    BIT(CTRL_EN_BIT) | BIT(CTRL_PG_BIT),
+			    tps65090_fet_control_ops),
 
-	tps65090_REG_DESC(LDO1,  "vsys-l1", 0, 0,
-			  tps65090_ldo_ops),
-	tps65090_REG_DESC(LDO2,  "vsys-l2", 0, 0,
-			  tps65090_ldo_ops),
+	tps65090_REG_FIXEDV(LDO1,  "vsys-l1", 0, 0, 5000000,
+			    tps65090_ldo_ops),
+	tps65090_REG_FIXEDV(LDO2,  "vsys-l2", 0, 0, 3300000,
+			    tps65090_ldo_ops),
 };
 
 static inline bool is_dcdc(int id)
@@ -292,22 +300,6 @@ static int tps65090_regulator_disable_ext_control(
 	return tps65090_config_ext_control(ri, false);
 }
 
-static void tps65090_configure_regulator_config(
-		struct tps65090_regulator_plat_data *tps_pdata,
-		struct regulator_config *config)
-{
-	if (gpio_is_valid(tps_pdata->gpio)) {
-		int gpio_flag = GPIOF_OUT_INIT_LOW;
-
-		if (tps_pdata->reg_init_data->constraints.always_on ||
-				tps_pdata->reg_init_data->constraints.boot_on)
-			gpio_flag = GPIOF_OUT_INIT_HIGH;
-
-		config->ena_gpio = tps_pdata->gpio;
-		config->ena_gpio_flags = gpio_flag;
-	}
-}
-
 #ifdef CONFIG_OF
 static struct of_regulator_match tps65090_matches[] = {
 	{ .name = "dcdc1", },
@@ -339,8 +331,9 @@ static struct tps65090_platform_data *tps65090_parse_dt_reg_data(
 	if (!tps65090_pdata)
 		return ERR_PTR(-ENOMEM);
 
-	reg_pdata = devm_kzalloc(&pdev->dev, TPS65090_REGULATOR_MAX *
-				sizeof(*reg_pdata), GFP_KERNEL);
+	reg_pdata = devm_kcalloc(&pdev->dev,
+				 TPS65090_REGULATOR_MAX, sizeof(*reg_pdata),
+				 GFP_KERNEL);
 	if (!reg_pdata)
 		return ERR_PTR(-ENOMEM);
 
@@ -373,9 +366,27 @@ static struct tps65090_platform_data *tps65090_parse_dt_reg_data(
 		rpdata->enable_ext_control = of_property_read_bool(
 					tps65090_matches[idx].of_node,
 					"ti,enable-ext-control");
-		if (rpdata->enable_ext_control)
-			rpdata->gpio = of_get_named_gpio(np,
-					"dcdc-ext-control-gpios", 0);
+		if (rpdata->enable_ext_control) {
+			enum gpiod_flags gflags;
+
+			if (ri_data->constraints.always_on ||
+			    ri_data->constraints.boot_on)
+				gflags = GPIOD_OUT_HIGH;
+			else
+				gflags = GPIOD_OUT_LOW;
+			gflags |= GPIOD_FLAGS_BIT_NONEXCLUSIVE;
+
+			rpdata->gpiod = devm_gpiod_get_from_of_node(&pdev->dev,
+								    tps65090_matches[idx].of_node,
+								    "dcdc-ext-control-gpios", 0,
+								    gflags,
+								    "tps65090");
+			if (IS_ERR(rpdata->gpiod))
+				return ERR_CAST(rpdata->gpiod);
+			if (!rpdata->gpiod)
+				dev_err(&pdev->dev,
+					"could not find DCDC external control GPIO\n");
+		}
 
 		if (of_property_read_u32(tps65090_matches[idx].of_node,
 					 "ti,overcurrent-wait",
@@ -420,8 +431,9 @@ static int tps65090_regulator_probe(struct platform_device *pdev)
 		return tps65090_pdata ? PTR_ERR(tps65090_pdata) : -EINVAL;
 	}
 
-	pmic = devm_kzalloc(&pdev->dev, TPS65090_REGULATOR_MAX * sizeof(*pmic),
-			GFP_KERNEL);
+	pmic = devm_kcalloc(&pdev->dev,
+			    TPS65090_REGULATOR_MAX, sizeof(*pmic),
+			    GFP_KERNEL);
 	if (!pmic)
 		return -ENOMEM;
 
@@ -443,8 +455,7 @@ static int tps65090_regulator_probe(struct platform_device *pdev)
 		 */
 		if (tps_pdata && is_dcdc(num) && tps_pdata->reg_init_data) {
 			if (tps_pdata->enable_ext_control) {
-				tps65090_configure_regulator_config(
-						tps_pdata, &config);
+				config.ena_gpiod = tps_pdata->gpiod;
 				ri->desc->ops = &tps65090_ext_control_ops;
 			} else {
 				ret = tps65090_regulator_disable_ext_control(
@@ -469,6 +480,12 @@ static int tps65090_regulator_probe(struct platform_device *pdev)
 		else
 			config.of_node = NULL;
 
+		/*
+		 * Hand the GPIO descriptor management over to the regulator
+		 * core, remove it from devres management.
+		 */
+		if (config.ena_gpiod)
+			devm_gpiod_unhinge(&pdev->dev, config.ena_gpiod);
 		rdev = devm_regulator_register(&pdev->dev, ri->desc, &config);
 		if (IS_ERR(rdev)) {
 			dev_err(&pdev->dev, "failed to register regulator %s\n",
@@ -499,7 +516,6 @@ static int tps65090_regulator_probe(struct platform_device *pdev)
 static struct platform_driver tps65090_regulator_driver = {
 	.driver	= {
 		.name	= "tps65090-pmic",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= tps65090_regulator_probe,
 };

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SPARC64_CACHEFLUSH_H
 #define _SPARC64_CACHEFLUSH_H
 
@@ -73,11 +74,6 @@ void flush_ptrace_access(struct vm_area_struct *, struct page *,
 
 #define flush_cache_vmap(start, end)		do { } while (0)
 #define flush_cache_vunmap(start, end)		do { } while (0)
-
-#ifdef CONFIG_DEBUG_PAGEALLOC
-/* internal debugging function */
-void kernel_map_pages(struct page *page, int numpages, int enable);
-#endif
 
 #endif /* !__ASSEMBLY__ */
 

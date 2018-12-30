@@ -344,7 +344,7 @@ static void ews88_setup_spdif(struct snd_ice1712 *ice, int rate)
 
 /*
  */
-static struct snd_akm4xxx akm_ews88mt = {
+static const struct snd_akm4xxx akm_ews88mt = {
 	.num_adcs = 8,
 	.num_dacs = 8,
 	.type = SND_AK4524,
@@ -354,7 +354,7 @@ static struct snd_akm4xxx akm_ews88mt = {
 	}
 };
 
-static struct snd_ak4xxx_private akm_ews88mt_priv = {
+static const struct snd_ak4xxx_private akm_ews88mt_priv = {
 	.caddr = 2,
 	.cif = 1, /* CIF high */
 	.data_mask = ICE1712_EWS88_SERIAL_DATA,
@@ -366,7 +366,7 @@ static struct snd_ak4xxx_private akm_ews88mt_priv = {
 	.mask_flags = 0,
 };
 
-static struct snd_akm4xxx akm_ewx2496 = {
+static const struct snd_akm4xxx akm_ewx2496 = {
 	.num_adcs = 2,
 	.num_dacs = 2,
 	.type = SND_AK4524,
@@ -375,7 +375,7 @@ static struct snd_akm4xxx akm_ewx2496 = {
 	}
 };
 
-static struct snd_ak4xxx_private akm_ewx2496_priv = {
+static const struct snd_ak4xxx_private akm_ewx2496_priv = {
 	.caddr = 2,
 	.cif = 1, /* CIF high */
 	.data_mask = ICE1712_EWS88_SERIAL_DATA,
@@ -387,7 +387,7 @@ static struct snd_ak4xxx_private akm_ewx2496_priv = {
 	.mask_flags = 0,
 };
 
-static struct snd_akm4xxx akm_6fire = {
+static const struct snd_akm4xxx akm_6fire = {
 	.num_adcs = 6,
 	.num_dacs = 6,
 	.type = SND_AK4524,
@@ -396,7 +396,7 @@ static struct snd_akm4xxx akm_6fire = {
 	}
 };
 
-static struct snd_ak4xxx_private akm_6fire_priv = {
+static const struct snd_ak4xxx_private akm_6fire_priv = {
 	.caddr = 2,
 	.cif = 1, /* CIF high */
 	.data_mask = ICE1712_6FIRE_SERIAL_DATA,
@@ -580,13 +580,7 @@ static int snd_ice1712_ewx_io_sense_info(struct snd_kcontrol *kcontrol, struct s
 	static const char * const texts[2] = {
 		"+4dBu", "-10dBV",
 	};
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	uinfo->count = 1;
-	uinfo->value.enumerated.items = 2;
-	if (uinfo->value.enumerated.item >= 2)
-		uinfo->value.enumerated.item = 1;
-	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
-	return 0;
+	return snd_ctl_enum_info(uinfo, 1, 2, texts);
 }
 
 static int snd_ice1712_ewx_io_sense_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
@@ -725,7 +719,7 @@ static int snd_ice1712_ews88mt_input_sense_put(struct snd_kcontrol *kcontrol, st
 	return ndata != data;
 }
 
-static struct snd_kcontrol_new snd_ice1712_ews88mt_input_sense = {
+static const struct snd_kcontrol_new snd_ice1712_ews88mt_input_sense = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Input Sensitivity Switch",
 	.info = snd_ice1712_ewx_io_sense_info,
@@ -734,7 +728,7 @@ static struct snd_kcontrol_new snd_ice1712_ews88mt_input_sense = {
 	.count = 8,
 };
 
-static struct snd_kcontrol_new snd_ice1712_ews88mt_output_sense = {
+static const struct snd_kcontrol_new snd_ice1712_ews88mt_output_sense = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Output Sensitivity Switch",
 	.info = snd_ice1712_ewx_io_sense_info,
@@ -903,13 +897,7 @@ static int snd_ice1712_6fire_select_input_info(struct snd_kcontrol *kcontrol, st
 	static const char * const texts[4] = {
 		"Internal", "Front Input", "Rear Input", "Wave Table"
 	};
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	uinfo->count = 1;
-	uinfo->value.enumerated.items = 4;
-	if (uinfo->value.enumerated.item >= 4)
-		uinfo->value.enumerated.item = 1;
-	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
-	return 0;
+	return snd_ctl_enum_info(uinfo, 1, 4, texts);
 }
      
 static int snd_ice1712_6fire_select_input_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)

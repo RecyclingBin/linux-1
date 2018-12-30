@@ -9,8 +9,11 @@
  */
 
 #include <linux/mfd/core.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/of.h>
+
+#define SUN8I_CODEC_ANALOG_BASE	0x1c0
+#define SUN8I_CODEC_ANALOG_SIZE	0x4
 
 struct prcm_data {
 	int nsubdevs;
@@ -41,12 +44,24 @@ static const struct resource sun6i_a31_apb0_gates_clk_res[] = {
 	},
 };
 
+static const struct resource sun6i_a31_ir_clk_res[] = {
+	{
+		.start = 0x54,
+		.end = 0x57,
+		.flags = IORESOURCE_MEM,
+	},
+};
+
 static const struct resource sun6i_a31_apb0_rstc_res[] = {
 	{
 		.start = 0xb0,
 		.end = 0xb3,
 		.flags = IORESOURCE_MEM,
 	},
+};
+
+static const struct resource sun8i_codec_analog_res[] = {
+	DEFINE_RES_MEM(SUN8I_CODEC_ANALOG_BASE, SUN8I_CODEC_ANALOG_SIZE),
 };
 
 static const struct mfd_cell sun6i_a31_prcm_subdevs[] = {
@@ -69,10 +84,43 @@ static const struct mfd_cell sun6i_a31_prcm_subdevs[] = {
 		.resources = sun6i_a31_apb0_gates_clk_res,
 	},
 	{
+		.name = "sun6i-a31-ir-clk",
+		.of_compatible = "allwinner,sun4i-a10-mod0-clk",
+		.num_resources = ARRAY_SIZE(sun6i_a31_ir_clk_res),
+		.resources = sun6i_a31_ir_clk_res,
+	},
+	{
 		.name = "sun6i-a31-apb0-clock-reset",
 		.of_compatible = "allwinner,sun6i-a31-clock-reset",
 		.num_resources = ARRAY_SIZE(sun6i_a31_apb0_rstc_res),
 		.resources = sun6i_a31_apb0_rstc_res,
+	},
+};
+
+static const struct mfd_cell sun8i_a23_prcm_subdevs[] = {
+	{
+		.name = "sun8i-a23-apb0-clk",
+		.of_compatible = "allwinner,sun8i-a23-apb0-clk",
+		.num_resources = ARRAY_SIZE(sun6i_a31_apb0_clk_res),
+		.resources = sun6i_a31_apb0_clk_res,
+	},
+	{
+		.name = "sun6i-a31-apb0-gates-clk",
+		.of_compatible = "allwinner,sun8i-a23-apb0-gates-clk",
+		.num_resources = ARRAY_SIZE(sun6i_a31_apb0_gates_clk_res),
+		.resources = sun6i_a31_apb0_gates_clk_res,
+	},
+	{
+		.name = "sun6i-a31-apb0-clock-reset",
+		.of_compatible = "allwinner,sun6i-a31-clock-reset",
+		.num_resources = ARRAY_SIZE(sun6i_a31_apb0_rstc_res),
+		.resources = sun6i_a31_apb0_rstc_res,
+	},
+	{
+		.name		= "sun8i-codec-analog",
+		.of_compatible	= "allwinner,sun8i-a23-codec-analog",
+		.num_resources	= ARRAY_SIZE(sun8i_codec_analog_res),
+		.resources	= sun8i_codec_analog_res,
 	},
 };
 
@@ -81,10 +129,19 @@ static const struct prcm_data sun6i_a31_prcm_data = {
 	.subdevs = sun6i_a31_prcm_subdevs,
 };
 
+static const struct prcm_data sun8i_a23_prcm_data = {
+	.nsubdevs = ARRAY_SIZE(sun8i_a23_prcm_subdevs),
+	.subdevs = sun8i_a23_prcm_subdevs,
+};
+
 static const struct of_device_id sun6i_prcm_dt_ids[] = {
 	{
 		.compatible = "allwinner,sun6i-a31-prcm",
 		.data = &sun6i_a31_prcm_data,
+	},
+	{
+		.compatible = "allwinner,sun8i-a23-prcm",
+		.data = &sun8i_a23_prcm_data,
 	},
 	{ /* sentinel */ },
 };
@@ -122,13 +179,8 @@ static int sun6i_prcm_probe(struct platform_device *pdev)
 static struct platform_driver sun6i_prcm_driver = {
 	.driver = {
 		.name = "sun6i-prcm",
-		.owner = THIS_MODULE,
 		.of_match_table = sun6i_prcm_dt_ids,
 	},
 	.probe = sun6i_prcm_probe,
 };
-module_platform_driver(sun6i_prcm_driver);
-
-MODULE_AUTHOR("Boris BREZILLON <boris.brezillon@free-electrons.com>");
-MODULE_DESCRIPTION("Allwinner sun6i PRCM driver");
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(sun6i_prcm_driver);

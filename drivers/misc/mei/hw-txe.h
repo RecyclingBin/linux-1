@@ -40,11 +40,12 @@
  * @mem_addr:            SeC and BRIDGE bars
  * @aliveness:           aliveness (power gating) state of the hardware
  * @readiness:           readiness state of the hardware
+ * @slots:               number of empty slots
  * @wait_aliveness_resp: aliveness wait queue
  * @intr_cause:          translated interrupt cause
  */
 struct mei_txe_hw {
-	void __iomem *mem_addr[NUM_OF_MEM_BARS];
+	void __iomem * const *mem_addr;
 	u32 aliveness;
 	u32 readiness;
 	u32 slots;
@@ -61,10 +62,7 @@ static inline struct mei_device *hw_txe_to_mei(struct mei_txe_hw *hw)
 	return container_of((void *)hw, struct mei_device, hw);
 }
 
-extern const struct mei_cfg mei_txe_cfg;
-
-struct mei_device *mei_txe_dev_init(struct pci_dev *pdev,
-	const struct mei_cfg *cfg);
+struct mei_device *mei_txe_dev_init(struct pci_dev *pdev);
 
 irqreturn_t mei_txe_irq_quick_handler(int irq, void *dev_id);
 irqreturn_t mei_txe_irq_thread_handler(int irq, void *dev_id);

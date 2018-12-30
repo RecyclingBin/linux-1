@@ -101,7 +101,6 @@ error_ret:
 }
 
 static const struct iio_trigger_ops itg3200_trigger_ops = {
-	.owner = THIS_MODULE,
 	.set_trigger_state = &itg3200_data_rdy_trigger_set_state,
 };
 
@@ -132,7 +131,7 @@ int itg3200_probe_trigger(struct iio_dev *indio_dev)
 		goto error_free_irq;
 
 	/* select default trigger */
-	indio_dev->trig = st->trig;
+	indio_dev->trig = iio_trigger_get(st->trig);
 
 	return 0;
 

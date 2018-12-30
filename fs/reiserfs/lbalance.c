@@ -2,7 +2,7 @@
  * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
  */
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/string.h>
 #include <linux/time.h>
 #include "reiserfs.h"
@@ -475,7 +475,7 @@ static void leaf_item_bottle(struct buffer_info *dest_bi,
 			 * 'cpy_bytes'; create new item header;
 			 * n_ih = new item_header;
 			 */
-			memcpy(&n_ih, ih, SHORT_KEY_SIZE);
+			memcpy(&n_ih.ih_key, &ih->ih_key, KEY_SIZE);
 
 			/* Endian safe, both le */
 			n_ih.ih_version = ih->ih_version;
@@ -899,8 +899,9 @@ void leaf_delete_items(struct buffer_info *cur_bi, int last_first,
 
 /* insert item into the leaf node in position before */
 void leaf_insert_into_buf(struct buffer_info *bi, int before,
-			  struct item_head *inserted_item_ih,
-			  const char *inserted_item_body, int zeros_number)
+			  struct item_head * const inserted_item_ih,
+			  const char * const inserted_item_body,
+			  int zeros_number)
 {
 	struct buffer_head *bh = bi->bi_bh;
 	int nr, free_space;

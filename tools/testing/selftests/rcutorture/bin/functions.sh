@@ -64,6 +64,51 @@ configfrag_boot_params () {
 	fi
 }
 
+# configfrag_boot_cpus bootparam-string config-fragment-file config-cpus
+#
+# Decreases number of CPUs based on any nr_cpus= boot parameters specified.
+configfrag_boot_cpus () {
+	local bootargs="`configfrag_boot_params "$1" "$2"`"
+	local nr_cpus
+	if echo "${bootargs}" | grep -q 'nr_cpus=[0-9]'
+	then
+		nr_cpus="`echo "${bootargs}" | sed -e 's/^.*nr_cpus=\([0-9]*\).*$/\1/'`"
+		if test "$3" -gt "$nr_cpus"
+		then
+			echo $nr_cpus
+		else
+			echo $3
+		fi
+	else
+		echo $3
+	fi
+}
+
+# configfrag_boot_maxcpus bootparam-string config-fragment-file config-cpus
+#
+# Decreases number of CPUs based on any maxcpus= boot parameters specified.
+# This allows tests where additional CPUs come online later during the
+# test run.  However, the torture parameters will be set based on the
+# number of CPUs initially present, so the scripting should schedule
+# test runs based on the maxcpus= boot parameter controlling the initial
+# number of CPUs instead of on the ultimate number of CPUs.
+configfrag_boot_maxcpus () {
+	local bootargs="`configfrag_boot_params "$1" "$2"`"
+	local maxcpus
+	if echo "${bootargs}" | grep -q 'maxcpus=[0-9]'
+	then
+		maxcpus="`echo "${bootargs}" | sed -e 's/^.*maxcpus=\([0-9]*\).*$/\1/'`"
+		if test "$3" -gt "$maxcpus"
+		then
+			echo $maxcpus
+		else
+			echo $3
+		fi
+	else
+		echo $3
+	fi
+}
+
 # configfrag_hotplug_cpu config-fragment-file
 #
 # Returns 1 if the config fragment specifies hotplug CPU.
@@ -79,8 +124,9 @@ configfrag_hotplug_cpu () {
 # identify_boot_image qemu-cmd
 #
 # Returns the relative path to the kernel build image.  This will be
-# arch/<arch>/boot/bzImage unless overridden with the TORTURE_BOOT_IMAGE
-# environment variable.
+# arch/<arch>/boot/bzImage or vmlinux if bzImage is not a target for the
+# architecture, unless overridden with the TORTURE_BOOT_IMAGE environment
+# variable.
 identify_boot_image () {
 	if test -n "$TORTURE_BOOT_IMAGE"
 	then
@@ -90,11 +136,11 @@ identify_boot_image () {
 		qemu-system-x86_64|qemu-system-i386)
 			echo arch/x86/boot/bzImage
 			;;
-		qemu-system-ppc64)
-			echo arch/powerpc/boot/bzImage
+		qemu-system-aarch64)
+			echo arch/arm64/boot/Image
 			;;
 		*)
-			echo ""
+			echo vmlinux
 			;;
 		esac
 	fi
@@ -115,6 +161,9 @@ identify_qemu () {
 	elif echo $u | grep -q "Intel 80386"
 	then
 		echo qemu-system-i386
+	elif echo $u | grep -q aarch64
+	then
+		echo qemu-system-aarch64
 	elif uname -a | grep -q ppc64
 	then
 		echo qemu-system-ppc64
@@ -133,16 +182,20 @@ identify_qemu () {
 # Output arguments for the qemu "-append" string based on CPU type
 # and the TORTURE_QEMU_INTERACTIVE environment variable.
 identify_qemu_append () {
+	local console=ttyS0
 	case "$1" in
 	qemu-system-x86_64|qemu-system-i386)
 		echo noapic selinux=0 initcall_debug debug
+		;;
+	qemu-system-aarch64)
+		console=ttyAMA0
 		;;
 	esac
 	if test -n "$TORTURE_QEMU_INTERACTIVE"
 	then
 		echo root=/dev/sda
 	else
-		echo console=ttyS0
+		echo console=$console
 	fi
 }
 
@@ -154,8 +207,11 @@ identify_qemu_args () {
 	case "$1" in
 	qemu-system-x86_64|qemu-system-i386)
 		;;
+	qemu-system-aarch64)
+		echo -machine virt,gic-version=host -cpu host
+		;;
 	qemu-system-ppc64)
-		echo -enable-kvm -M pseries -cpu POWER7 -nodefaults
+		echo -enable-kvm -M pseries -nodefaults
 		echo -device spapr-vscsi
 		if test -n "$TORTURE_QEMU_INTERACTIVE" -a -n "$TORTURE_QEMU_MAC"
 		then
@@ -211,7 +267,7 @@ specify_qemu_cpus () {
 		echo $2
 	else
 		case "$1" in
-		qemu-system-x86_64|qemu-system-i386)
+		qemu-system-x86_64|qemu-system-i386|qemu-system-aarch64)
 			echo $2 -smp $3
 			;;
 		qemu-system-ppc64)

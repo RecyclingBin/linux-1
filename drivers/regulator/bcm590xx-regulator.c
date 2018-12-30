@@ -202,7 +202,6 @@ static struct bcm590xx_info bcm590xx_regs[] = {
 struct bcm590xx_reg {
 	struct regulator_desc *desc;
 	struct bcm590xx *mfd;
-	struct bcm590xx_info **info;
 };
 
 static int bcm590xx_get_vsel_register(int id)
@@ -245,13 +244,13 @@ static int bcm590xx_get_enable_register(int id)
 			break;
 		case BCM590XX_REG_VBUS:
 			reg = BCM590XX_OTG_CTRL;
-		};
+		}
 
 
 	return reg;
 }
 
-static struct regulator_ops bcm590xx_ops_ldo = {
+static const struct regulator_ops bcm590xx_ops_ldo = {
 	.is_enabled		= regulator_is_enabled_regmap,
 	.enable			= regulator_enable_regmap,
 	.disable		= regulator_disable_regmap,
@@ -261,7 +260,7 @@ static struct regulator_ops bcm590xx_ops_ldo = {
 	.map_voltage		= regulator_map_voltage_iterate,
 };
 
-static struct regulator_ops bcm590xx_ops_dcdc = {
+static const struct regulator_ops bcm590xx_ops_dcdc = {
 	.is_enabled		= regulator_is_enabled_regmap,
 	.enable			= regulator_enable_regmap,
 	.disable		= regulator_disable_regmap,
@@ -271,7 +270,7 @@ static struct regulator_ops bcm590xx_ops_dcdc = {
 	.map_voltage		= regulator_map_voltage_linear_range,
 };
 
-static struct regulator_ops bcm590xx_ops_vbus = {
+static const struct regulator_ops bcm590xx_ops_vbus = {
 	.is_enabled		= regulator_is_enabled_regmap,
 	.enable			= regulator_enable_regmap,
 	.disable		= regulator_disable_regmap,
@@ -331,10 +330,8 @@ static struct bcm590xx_board *bcm590xx_parse_dt_reg_data(
 	}
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
-	if (!data) {
-		dev_err(&pdev->dev, "failed to allocate regulator board data\n");
+	if (!data)
 		return NULL;
-	}
 
 	np = of_node_get(np);
 	regulators = of_get_child_by_name(np, "regulators");
@@ -379,28 +376,19 @@ static int bcm590xx_probe(struct platform_device *pdev)
 					      &bcm590xx_reg_matches);
 
 	pmu = devm_kzalloc(&pdev->dev, sizeof(*pmu), GFP_KERNEL);
-	if (!pmu) {
-		dev_err(&pdev->dev, "Memory allocation failed for pmu\n");
+	if (!pmu)
 		return -ENOMEM;
-	}
 
 	pmu->mfd = bcm590xx;
 
 	platform_set_drvdata(pdev, pmu);
 
-	pmu->desc = devm_kzalloc(&pdev->dev, BCM590XX_NUM_REGS *
-			sizeof(struct regulator_desc), GFP_KERNEL);
-	if (!pmu->desc) {
-		dev_err(&pdev->dev, "Memory alloc fails for desc\n");
+	pmu->desc = devm_kcalloc(&pdev->dev,
+				 BCM590XX_NUM_REGS,
+				 sizeof(struct regulator_desc),
+				 GFP_KERNEL);
+	if (!pmu->desc)
 		return -ENOMEM;
-	}
-
-	pmu->info = devm_kzalloc(&pdev->dev, BCM590XX_NUM_REGS *
-			sizeof(struct bcm590xx_info *), GFP_KERNEL);
-	if (!pmu->info) {
-		dev_err(&pdev->dev, "Memory alloc fails for info\n");
-		return -ENOMEM;
-	}
 
 	info = bcm590xx_regs;
 
@@ -411,8 +399,6 @@ static int bcm590xx_probe(struct platform_device *pdev)
 			reg_data = NULL;
 
 		/* Register the regulators */
-		pmu->info[i] = info;
-
 		pmu->desc[i].name = info->name;
 		pmu->desc[i].supply_name = info->vin_name;
 		pmu->desc[i].id = i;
@@ -469,7 +455,6 @@ static int bcm590xx_probe(struct platform_device *pdev)
 static struct platform_driver bcm590xx_regulator_driver = {
 	.driver = {
 		.name = "bcm590xx-vregs",
-		.owner = THIS_MODULE,
 	},
 	.probe = bcm590xx_probe,
 };

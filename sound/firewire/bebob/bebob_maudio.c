@@ -96,17 +96,13 @@ int snd_bebob_maudio_load_firmware(struct fw_unit *unit)
 	struct fw_device *device = fw_parent_device(unit);
 	int err, rcode;
 	u64 date;
-	__be32 cues[3] = {
-		MAUDIO_BOOTLOADER_CUE1,
-		MAUDIO_BOOTLOADER_CUE2,
-		MAUDIO_BOOTLOADER_CUE3
-	};
+	__le32 *cues;
 
 	/* check date of software used to build */
 	err = snd_bebob_read_block(unit, INFO_OFFSET_SW_DATE,
 				   &date, sizeof(u64));
 	if (err < 0)
-		goto end;
+		return err;
 	/*
 	 * firmware version 5058 or later has date later than "20070401", but
 	 * 'date' is not null-terminated.
@@ -114,20 +110,28 @@ int snd_bebob_maudio_load_firmware(struct fw_unit *unit)
 	if (date < 0x3230303730343031LL) {
 		dev_err(&unit->device,
 			"Use firmware version 5058 or later\n");
-		err = -ENOSYS;
-		goto end;
+		return -ENXIO;
 	}
+
+	cues = kmalloc_array(3, sizeof(*cues), GFP_KERNEL);
+	if (!cues)
+		return -ENOMEM;
+
+	cues[0] = cpu_to_le32(MAUDIO_BOOTLOADER_CUE1);
+	cues[1] = cpu_to_le32(MAUDIO_BOOTLOADER_CUE2);
+	cues[2] = cpu_to_le32(MAUDIO_BOOTLOADER_CUE3);
 
 	rcode = fw_run_transaction(device->card, TCODE_WRITE_BLOCK_REQUEST,
 				   device->node_id, device->generation,
 				   device->max_speed, BEBOB_ADDR_REG_REQ,
-				   cues, sizeof(cues));
+				   cues, 3 * sizeof(*cues));
+	kfree(cues);
 	if (rcode != RCODE_COMPLETE) {
 		dev_err(&unit->device,
 			"Failed to send a cue to load firmware\n");
 		err = -EIO;
 	}
-end:
+
 	return err;
 }
 
@@ -257,8 +261,9 @@ snd_bebob_maudio_special_discover(struct snd_bebob *bebob, bool is1814)
 	struct special_params *params;
 	int err;
 
-	params = kzalloc(sizeof(struct special_params), GFP_KERNEL);
-	if (params == NULL)
+	params = devm_kzalloc(&bebob->card->card_dev,
+			      sizeof(struct special_params), GFP_KERNEL);
+	if (!params)
 		return -ENOMEM;
 
 	mutex_lock(&bebob->mutex);
@@ -290,10 +295,6 @@ snd_bebob_maudio_special_discover(struct snd_bebob *bebob, bool is1814)
 		bebob->midi_output_ports = 2;
 	}
 end:
-	if (err < 0) {
-		kfree(params);
-		bebob->maudio_special_quirk = NULL;
-	}
 	mutex_unlock(&bebob->mutex);
 	return err;
 }
@@ -340,9 +341,12 @@ end:
 }
 
 /* Clock source control for special firmware */
-static char *const special_clk_labels[] = {
-	SND_BEBOB_CLOCK_INTERNAL " with Digital Mute", "Digital",
-	"Word Clock", SND_BEBOB_CLOCK_INTERNAL};
+static const enum snd_bebob_clock_type special_clk_types[] = {
+	SND_BEBOB_CLOCK_TYPE_INTERNAL,	/* With digital mute */
+	SND_BEBOB_CLOCK_TYPE_EXTERNAL,	/* SPDIF/ADAT */
+	SND_BEBOB_CLOCK_TYPE_EXTERNAL,	/* Word Clock */
+	SND_BEBOB_CLOCK_TYPE_INTERNAL,
+};
 static int special_clk_get(struct snd_bebob *bebob, unsigned int *id)
 {
 	struct special_params *params = bebob->maudio_special_quirk;
@@ -352,17 +356,14 @@ static int special_clk_get(struct snd_bebob *bebob, unsigned int *id)
 static int special_clk_ctl_info(struct snd_kcontrol *kctl,
 				struct snd_ctl_elem_info *einf)
 {
-	einf->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	einf->count = 1;
-	einf->value.enumerated.items = ARRAY_SIZE(special_clk_labels);
-
-	if (einf->value.enumerated.item >= einf->value.enumerated.items)
-		einf->value.enumerated.item = einf->value.enumerated.items - 1;
-
-	strcpy(einf->value.enumerated.name,
-	       special_clk_labels[einf->value.enumerated.item]);
-
-	return 0;
+	static const char *const special_clk_labels[] = {
+		"Internal with Digital Mute",
+		"Digital",
+		"Word Clock",
+		"Internal"
+	};
+	return snd_ctl_enum_info(einf, 1, ARRAY_SIZE(special_clk_types),
+				 special_clk_labels);
 }
 static int special_clk_ctl_get(struct snd_kcontrol *kctl,
 			       struct snd_ctl_elem_value *uval)
@@ -379,11 +380,11 @@ static int special_clk_ctl_put(struct snd_kcontrol *kctl,
 	struct special_params *params = bebob->maudio_special_quirk;
 	int err, id;
 
-	mutex_lock(&bebob->mutex);
-
 	id = uval->value.enumerated.item[0];
-	if (id >= ARRAY_SIZE(special_clk_labels))
-		return 0;
+	if (id >= ARRAY_SIZE(special_clk_types))
+		return -EINVAL;
+
+	mutex_lock(&bebob->mutex);
 
 	err = avc_maudio_set_special_clk(bebob, id,
 					 params->dig_in_fmt,
@@ -391,9 +392,12 @@ static int special_clk_ctl_put(struct snd_kcontrol *kctl,
 					 params->clk_lock);
 	mutex_unlock(&bebob->mutex);
 
-	return err >= 0;
+	if (err >= 0)
+		err = 1;
+
+	return err;
 }
-static struct snd_kcontrol_new special_clk_ctl = {
+static const struct snd_kcontrol_new special_clk_ctl = {
 	.name	= "Clock Source",
 	.iface	= SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access	= SNDRV_CTL_ELEM_ACCESS_READWRITE,
@@ -426,7 +430,7 @@ static int special_sync_ctl_get(struct snd_kcontrol *kctl,
 
 	return 0;
 }
-static struct snd_kcontrol_new special_sync_ctl = {
+static const struct snd_kcontrol_new special_sync_ctl = {
 	.name	= "Sync Status",
 	.iface	= SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access	= SNDRV_CTL_ELEM_ACCESS_READ,
@@ -434,24 +438,16 @@ static struct snd_kcontrol_new special_sync_ctl = {
 	.get	= special_sync_ctl_get,
 };
 
-/* Digital interface control for special firmware */
-static char *const special_dig_iface_labels[] = {
+/* Digital input interface control for special firmware */
+static const char *const special_dig_in_iface_labels[] = {
 	"S/PDIF Optical", "S/PDIF Coaxial", "ADAT Optical"
 };
 static int special_dig_in_iface_ctl_info(struct snd_kcontrol *kctl,
 					 struct snd_ctl_elem_info *einf)
 {
-	einf->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	einf->count = 1;
-	einf->value.enumerated.items = ARRAY_SIZE(special_dig_iface_labels);
-
-	if (einf->value.enumerated.item >= einf->value.enumerated.items)
-		einf->value.enumerated.item = einf->value.enumerated.items - 1;
-
-	strcpy(einf->value.enumerated.name,
-	       special_dig_iface_labels[einf->value.enumerated.item]);
-
-	return 0;
+	return snd_ctl_enum_info(einf, 1,
+				 ARRAY_SIZE(special_dig_in_iface_labels),
+				 special_dig_in_iface_labels);
 }
 static int special_dig_in_iface_ctl_get(struct snd_kcontrol *kctl,
 					struct snd_ctl_elem_value *uval)
@@ -491,32 +487,42 @@ static int special_dig_in_iface_ctl_set(struct snd_kcontrol *kctl,
 	unsigned int id, dig_in_fmt, dig_in_iface;
 	int err;
 
-	mutex_lock(&bebob->mutex);
-
 	id = uval->value.enumerated.item[0];
+	if (id >= ARRAY_SIZE(special_dig_in_iface_labels))
+		return -EINVAL;
 
 	/* decode user value */
 	dig_in_fmt = (id >> 1) & 0x01;
 	dig_in_iface = id & 0x01;
+
+	mutex_lock(&bebob->mutex);
 
 	err = avc_maudio_set_special_clk(bebob,
 					 params->clk_src,
 					 dig_in_fmt,
 					 params->dig_out_fmt,
 					 params->clk_lock);
-	if ((err < 0) || (params->dig_in_fmt > 0)) /* ADAT */
+	if (err < 0)
 		goto end;
 
+	/* For ADAT, optical interface is only available. */
+	if (params->dig_in_fmt > 0) {
+		err = 1;
+		goto end;
+	}
+
+	/* For S/PDIF, optical/coaxial interfaces are selectable. */
 	err = avc_audio_set_selector(bebob->unit, 0x00, 0x04, dig_in_iface);
 	if (err < 0)
 		dev_err(&bebob->unit->device,
 			"fail to set digital input interface: %d\n", err);
+	err = 1;
 end:
 	special_stream_formation_set(bebob);
 	mutex_unlock(&bebob->mutex);
 	return err;
 }
-static struct snd_kcontrol_new special_dig_in_iface_ctl = {
+static const struct snd_kcontrol_new special_dig_in_iface_ctl = {
 	.name	= "Digital Input Interface",
 	.iface	= SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access	= SNDRV_CTL_ELEM_ACCESS_READWRITE,
@@ -525,20 +531,16 @@ static struct snd_kcontrol_new special_dig_in_iface_ctl = {
 	.put	= special_dig_in_iface_ctl_set
 };
 
+/* Digital output interface control for special firmware */
+static const char *const special_dig_out_iface_labels[] = {
+	"S/PDIF Optical and Coaxial", "ADAT Optical"
+};
 static int special_dig_out_iface_ctl_info(struct snd_kcontrol *kctl,
 					  struct snd_ctl_elem_info *einf)
 {
-	einf->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	einf->count = 1;
-	einf->value.enumerated.items = ARRAY_SIZE(special_dig_iface_labels) - 1;
-
-	if (einf->value.enumerated.item >= einf->value.enumerated.items)
-		einf->value.enumerated.item = einf->value.enumerated.items - 1;
-
-	strcpy(einf->value.enumerated.name,
-	       special_dig_iface_labels[einf->value.enumerated.item + 1]);
-
-	return 0;
+	return snd_ctl_enum_info(einf, 1,
+				 ARRAY_SIZE(special_dig_out_iface_labels),
+				 special_dig_out_iface_labels);
 }
 static int special_dig_out_iface_ctl_get(struct snd_kcontrol *kctl,
 					 struct snd_ctl_elem_value *uval)
@@ -558,21 +560,25 @@ static int special_dig_out_iface_ctl_set(struct snd_kcontrol *kctl,
 	unsigned int id;
 	int err;
 
-	mutex_lock(&bebob->mutex);
-
 	id = uval->value.enumerated.item[0];
+	if (id >= ARRAY_SIZE(special_dig_out_iface_labels))
+		return -EINVAL;
+
+	mutex_lock(&bebob->mutex);
 
 	err = avc_maudio_set_special_clk(bebob,
 					 params->clk_src,
 					 params->dig_in_fmt,
 					 id, params->clk_lock);
-	if (err >= 0)
+	if (err >= 0) {
 		special_stream_formation_set(bebob);
+		err = 1;
+	}
 
 	mutex_unlock(&bebob->mutex);
 	return err;
 }
-static struct snd_kcontrol_new special_dig_out_iface_ctl = {
+static const struct snd_kcontrol_new special_dig_out_iface_ctl = {
 	.name	= "Digital Output Interface",
 	.iface	= SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access	= SNDRV_CTL_ELEM_ACCESS_READWRITE,
@@ -610,7 +616,7 @@ end:
 }
 
 /* Hardware metering for special firmware */
-static char *const special_meter_labels[] = {
+static const char *const special_meter_labels[] = {
 	ANA_IN, ANA_IN, ANA_IN, ANA_IN,
 	SPDIF_IN,
 	ADAT_IN, ADAT_IN, ADAT_IN, ADAT_IN,
@@ -623,7 +629,7 @@ static char *const special_meter_labels[] = {
 static int
 special_meter_get(struct snd_bebob *bebob, u32 *target, unsigned int size)
 {
-	u16 *buf;
+	__be16 *buf;
 	unsigned int i, c, channels;
 	int err;
 
@@ -650,30 +656,30 @@ end:
 }
 
 /* last 4 bytes are omitted because it's clock info. */
-static char *const fw410_meter_labels[] = {
+static const char *const fw410_meter_labels[] = {
 	ANA_IN, DIG_IN,
 	ANA_OUT, ANA_OUT, ANA_OUT, ANA_OUT, DIG_OUT,
 	HP_OUT
 };
-static char *const audiophile_meter_labels[] = {
+static const char *const audiophile_meter_labels[] = {
 	ANA_IN, DIG_IN,
 	ANA_OUT, ANA_OUT, DIG_OUT,
 	HP_OUT, AUX_OUT,
 };
-static char *const solo_meter_labels[] = {
+static const char *const solo_meter_labels[] = {
 	ANA_IN, DIG_IN,
 	STRM_IN, STRM_IN,
 	ANA_OUT, DIG_OUT
 };
 
 /* no clock info */
-static char *const ozonic_meter_labels[] = {
+static const char *const ozonic_meter_labels[] = {
 	ANA_IN, ANA_IN,
 	STRM_IN, STRM_IN,
 	ANA_OUT, ANA_OUT
 };
 /* TODO: need testers. these positions are based on authour's assumption */
-static char *const nrv10_meter_labels[] = {
+static const char *const nrv10_meter_labels[] = {
 	ANA_IN, ANA_IN, ANA_IN, ANA_IN,
 	DIG_IN,
 	ANA_OUT, ANA_OUT, ANA_OUT, ANA_OUT,
@@ -682,7 +688,7 @@ static char *const nrv10_meter_labels[] = {
 static int
 normal_meter_get(struct snd_bebob *bebob, u32 *buf, unsigned int size)
 {
-	struct snd_bebob_meter_spec *spec = bebob->spec->meter;
+	const struct snd_bebob_meter_spec *spec = bebob->spec->meter;
 	unsigned int c, channels;
 	int err;
 
@@ -707,85 +713,85 @@ end:
 }
 
 /* for special customized devices */
-static struct snd_bebob_rate_spec special_rate_spec = {
+static const struct snd_bebob_rate_spec special_rate_spec = {
 	.get	= &special_get_rate,
 	.set	= &special_set_rate,
 };
-static struct snd_bebob_clock_spec special_clk_spec = {
-	.num	= ARRAY_SIZE(special_clk_labels),
-	.labels	= special_clk_labels,
+static const struct snd_bebob_clock_spec special_clk_spec = {
+	.num	= ARRAY_SIZE(special_clk_types),
+	.types	= special_clk_types,
 	.get	= &special_clk_get,
 };
-static struct snd_bebob_meter_spec special_meter_spec = {
+static const struct snd_bebob_meter_spec special_meter_spec = {
 	.num	= ARRAY_SIZE(special_meter_labels),
 	.labels	= special_meter_labels,
 	.get	= &special_meter_get
 };
-struct snd_bebob_spec maudio_special_spec = {
+const struct snd_bebob_spec maudio_special_spec = {
 	.clock	= &special_clk_spec,
 	.rate	= &special_rate_spec,
 	.meter	= &special_meter_spec
 };
 
 /* Firewire 410 specification */
-static struct snd_bebob_rate_spec usual_rate_spec = {
+static const struct snd_bebob_rate_spec usual_rate_spec = {
 	.get	= &snd_bebob_stream_get_rate,
 	.set	= &snd_bebob_stream_set_rate,
 };
-static struct snd_bebob_meter_spec fw410_meter_spec = {
+static const struct snd_bebob_meter_spec fw410_meter_spec = {
 	.num	= ARRAY_SIZE(fw410_meter_labels),
 	.labels	= fw410_meter_labels,
 	.get	= &normal_meter_get
 };
-struct snd_bebob_spec maudio_fw410_spec = {
+const struct snd_bebob_spec maudio_fw410_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &fw410_meter_spec
 };
 
 /* Firewire Audiophile specification */
-static struct snd_bebob_meter_spec audiophile_meter_spec = {
+static const struct snd_bebob_meter_spec audiophile_meter_spec = {
 	.num	= ARRAY_SIZE(audiophile_meter_labels),
 	.labels	= audiophile_meter_labels,
 	.get	= &normal_meter_get
 };
-struct snd_bebob_spec maudio_audiophile_spec = {
+const struct snd_bebob_spec maudio_audiophile_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &audiophile_meter_spec
 };
 
 /* Firewire Solo specification */
-static struct snd_bebob_meter_spec solo_meter_spec = {
+static const struct snd_bebob_meter_spec solo_meter_spec = {
 	.num	= ARRAY_SIZE(solo_meter_labels),
 	.labels	= solo_meter_labels,
 	.get	= &normal_meter_get
 };
-struct snd_bebob_spec maudio_solo_spec = {
+const struct snd_bebob_spec maudio_solo_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &solo_meter_spec
 };
 
 /* Ozonic specification */
-static struct snd_bebob_meter_spec ozonic_meter_spec = {
+static const struct snd_bebob_meter_spec ozonic_meter_spec = {
 	.num	= ARRAY_SIZE(ozonic_meter_labels),
 	.labels	= ozonic_meter_labels,
 	.get	= &normal_meter_get
 };
-struct snd_bebob_spec maudio_ozonic_spec = {
+const struct snd_bebob_spec maudio_ozonic_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &ozonic_meter_spec
 };
 
 /* NRV10 specification */
-static struct snd_bebob_meter_spec nrv10_meter_spec = {
+static const struct snd_bebob_meter_spec nrv10_meter_spec = {
 	.num	= ARRAY_SIZE(nrv10_meter_labels),
 	.labels	= nrv10_meter_labels,
 	.get	= &normal_meter_get
 };
-struct snd_bebob_spec maudio_nrv10_spec = {
+const struct snd_bebob_spec maudio_nrv10_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &nrv10_meter_spec

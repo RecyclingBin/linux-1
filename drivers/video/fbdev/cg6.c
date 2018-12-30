@@ -810,8 +810,8 @@ static int cg6_probe(struct platform_device *op)
 
 	dev_set_drvdata(&op->dev, info);
 
-	printk(KERN_INFO "%s: CGsix [%s] at %lx:%lx\n",
-	       dp->full_name, info->fix.id,
+	printk(KERN_INFO "%pOF: CGsix [%s] at %lx:%lx\n",
+	       dp, info->fix.id,
 	       par->which_io, info->fix.smem_start);
 
 	return 0;
@@ -856,7 +856,6 @@ MODULE_DEVICE_TABLE(of, cg6_match);
 static struct platform_driver cg6_driver = {
 	.driver = {
 		.name = "cg6",
-		.owner = THIS_MODULE,
 		.of_match_table = cg6_match,
 	},
 	.probe		= cg6_probe,

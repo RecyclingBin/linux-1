@@ -603,9 +603,9 @@ static void uwb_cnflt_update_work(struct work_struct *work)
 	mutex_unlock(&rc->rsvs_mutex);
 }
 
-static void uwb_cnflt_timer(unsigned long arg)
+static void uwb_cnflt_timer(struct timer_list *t)
 {
-	struct uwb_cnflt_alien *cnflt = (struct uwb_cnflt_alien *)arg;
+	struct uwb_cnflt_alien *cnflt = from_timer(cnflt, t, timer);
 
 	queue_work(cnflt->rc->rsv_workq, &cnflt->cnflt_update_work);
 }
@@ -619,11 +619,9 @@ static void uwb_drp_handle_alien_drp(struct uwb_rc *rc, struct uwb_ie_drp *drp_i
 	struct device *dev = &rc->uwb_dev.dev;
 	struct uwb_mas_bm mas;
 	struct uwb_cnflt_alien *cnflt;
-	char buf[72];
 	unsigned long delay_us = UWB_MAS_LENGTH_US * UWB_MAS_PER_ZONE;
 
 	uwb_drp_ie_to_bm(&mas, drp_ie);
-	bitmap_scnprintf(buf, sizeof(buf), mas.bm, UWB_NUM_MAS);
 
 	list_for_each_entry(cnflt, &rc->cnflt_alien_list, rc_node) {
 		if (bitmap_equal(cnflt->mas.bm, mas.bm, UWB_NUM_MAS)) {
@@ -644,9 +642,7 @@ static void uwb_drp_handle_alien_drp(struct uwb_rc *rc, struct uwb_ie_drp *drp_i
 	}
 
 	INIT_LIST_HEAD(&cnflt->rc_node);
-	init_timer(&cnflt->timer);
-	cnflt->timer.function = uwb_cnflt_timer;
-	cnflt->timer.data     = (unsigned long)cnflt;
+	timer_setup(&cnflt->timer, uwb_cnflt_timer, 0);
 
 	cnflt->rc = rc;
 	INIT_WORK(&cnflt->cnflt_update_work, uwb_cnflt_update_work);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/hpfs/dnode.c
  *
@@ -21,7 +22,7 @@ static loff_t get_pos(struct dnode *d, struct hpfs_dirent *fde)
 	return ((loff_t)le32_to_cpu(d->self) << 4) | (loff_t)1;
 }
 
-void hpfs_add_pos(struct inode *inode, loff_t *pos)
+int hpfs_add_pos(struct inode *inode, loff_t *pos)
 {
 	struct hpfs_inode_info *hpfs_inode = hpfs_i(inode);
 	int i = 0;
@@ -29,11 +30,13 @@ void hpfs_add_pos(struct inode *inode, loff_t *pos)
 
 	if (hpfs_inode->i_rddir_off)
 		for (; hpfs_inode->i_rddir_off[i]; i++)
-			if (hpfs_inode->i_rddir_off[i] == pos) return;
+			if (hpfs_inode->i_rddir_off[i] == pos)
+				return 0;
 	if (!(i&0x0f)) {
-		if (!(ppos = kmalloc((i+0x11) * sizeof(loff_t*), GFP_NOFS))) {
+		ppos = kmalloc_array(i + 0x11, sizeof(loff_t *), GFP_NOFS);
+		if (!ppos) {
 			pr_err("out of memory for position list\n");
-			return;
+			return -ENOMEM;
 		}
 		if (hpfs_inode->i_rddir_off) {
 			memcpy(ppos, hpfs_inode->i_rddir_off, i * sizeof(loff_t));
@@ -43,6 +46,7 @@ void hpfs_add_pos(struct inode *inode, loff_t *pos)
 	}
 	hpfs_inode->i_rddir_off[i] = pos;
 	hpfs_inode->i_rddir_off[i + 1] = NULL;
+	return 0;
 }
 
 void hpfs_del_pos(struct inode *inode, loff_t *pos)
@@ -416,7 +420,6 @@ int hpfs_add_dirent(struct inode *i,
 		c = 1;
 		goto ret;
 	}	
-	i->i_version++;
 	c = hpfs_add_to_dnode(i, dno, name, namelen, new_de, 0);
 	ret:
 	return c;
@@ -545,12 +548,13 @@ static void delete_empty_dnode(struct inode *i, dnode_secno dno)
 			struct dnode *d1;
 			struct quad_buffer_head qbh1;
 			if (hpfs_sb(i->i_sb)->sb_chk)
-			    if (up != i->i_ino) {
-				hpfs_error(i->i_sb,
-					"bad pointer to fnode, dnode %08x, pointing to %08x, should be %08lx",
-					dno, up, (unsigned long)i->i_ino);
-				return;
-			    }
+				if (up != i->i_ino) {
+					hpfs_error(i->i_sb,
+						   "bad pointer to fnode, dnode %08x, pointing to %08x, should be %08lx",
+						   dno, up,
+						   (unsigned long)i->i_ino);
+					return;
+				}
 			if ((d1 = hpfs_map_dnode(i->i_sb, down, &qbh1))) {
 				d1->up = cpu_to_le32(up);
 				d1->root_dnode = 1;
@@ -722,7 +726,6 @@ int hpfs_remove_dirent(struct inode *i, dnode_secno dno, struct hpfs_dirent *de,
 			return 2;
 		}
 	}
-	i->i_version++;
 	for_all_poss(i, hpfs_pos_del, (t = get_pos(dnode, de)) + 1, 1);
 	hpfs_delete_de(i->i_sb, dnode, de);
 	hpfs_mark_4buffers_dirty(qbh);
@@ -1061,8 +1064,8 @@ struct hpfs_dirent *map_fnode_dirent(struct super_block *s, fnode_secno fno,
 		hpfs_brelse4(qbh);
 		if (hpfs_sb(s)->sb_chk)
 			if (hpfs_stop_cycles(s, dno, &c1, &c2, "map_fnode_dirent #1")) {
-			kfree(name2);
-			return NULL;
+				kfree(name2);
+				return NULL;
 		}
 		goto go_down;
 	}

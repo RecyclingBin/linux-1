@@ -2,7 +2,7 @@
 #
 # Analyze a given results directory for locktorture progress.
 #
-# Usage: sh kvm-recheck-lock.sh resdir
+# Usage: kvm-recheck-lock.sh resdir
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 # Authors: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
 
 i="$1"
-if test -d $i
+if test -d "$i" -a -r "$i"
 then
 	:
 else

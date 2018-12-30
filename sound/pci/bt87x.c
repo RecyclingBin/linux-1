@@ -27,7 +27,7 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/bitops.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -228,14 +228,14 @@ static int snd_bt87x_create_risc(struct snd_bt87x *chip, struct snd_pcm_substrea
 			       	 unsigned int periods, unsigned int period_bytes)
 {
 	unsigned int i, offset;
-	u32 *risc;
+	__le32 *risc;
 
 	if (chip->dma_risc.area == NULL) {
 		if (snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, snd_dma_pci_data(chip->pci),
 					PAGE_ALIGN(MAX_RISC_SIZE), &chip->dma_risc) < 0)
 			return -ENOMEM;
 	}
-	risc = (u32 *)chip->dma_risc.area;
+	risc = (__le32 *)chip->dma_risc.area;
 	offset = 0;
 	*risc++ = cpu_to_le32(RISC_SYNC | RISC_SYNC_FM1);
 	*risc++ = cpu_to_le32(0);
@@ -353,7 +353,7 @@ static irqreturn_t snd_bt87x_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static struct snd_pcm_hardware snd_bt87x_digital_hw = {
+static const struct snd_pcm_hardware snd_bt87x_digital_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_INTERLEAVED |
 		SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -370,7 +370,7 @@ static struct snd_pcm_hardware snd_bt87x_digital_hw = {
 	.periods_max = 255,
 };
 
-static struct snd_pcm_hardware snd_bt87x_analog_hw = {
+static const struct snd_pcm_hardware snd_bt87x_analog_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_INTERLEAVED |
 		SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -401,13 +401,13 @@ static int snd_bt87x_set_digital_hw(struct snd_bt87x *chip, struct snd_pcm_runti
 
 static int snd_bt87x_set_analog_hw(struct snd_bt87x *chip, struct snd_pcm_runtime *runtime)
 {
-	static struct snd_ratnum analog_clock = {
+	static const struct snd_ratnum analog_clock = {
 		.num = ANALOG_CLOCK,
 		.den_min = CLOCK_DIV_MIN,
 		.den_max = CLOCK_DIV_MAX,
 		.den_step = 1
 	};
-	static struct snd_pcm_hw_constraint_ratnums constraint_rates = {
+	static const struct snd_pcm_hw_constraint_ratnums constraint_rates = {
 		.nrats = 1,
 		.rats = &analog_clock
 	};
@@ -550,7 +550,7 @@ static snd_pcm_uframes_t snd_bt87x_pointer(struct snd_pcm_substream *substream)
 	return (snd_pcm_uframes_t)bytes_to_frames(runtime, chip->current_line * chip->line_bytes);
 }
 
-static struct snd_pcm_ops snd_bt87x_pcm_ops = {
+static const struct snd_pcm_ops snd_bt87x_pcm_ops = {
 	.open = snd_bt87x_pcm_open,
 	.close = snd_bt87x_close,
 	.ioctl = snd_pcm_lib_ioctl,
@@ -598,7 +598,7 @@ static int snd_bt87x_capture_volume_put(struct snd_kcontrol *kcontrol,
 	return changed;
 }
 
-static struct snd_kcontrol_new snd_bt87x_capture_volume = {
+static const struct snd_kcontrol_new snd_bt87x_capture_volume = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Capture Volume",
 	.info = snd_bt87x_capture_volume_info,
@@ -634,7 +634,7 @@ static int snd_bt87x_capture_boost_put(struct snd_kcontrol *kcontrol,
 	return changed;
 }
 
-static struct snd_kcontrol_new snd_bt87x_capture_boost = {
+static const struct snd_kcontrol_new snd_bt87x_capture_boost = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Capture Boost",
 	.info = snd_bt87x_capture_boost_info,
@@ -676,7 +676,7 @@ static int snd_bt87x_capture_source_put(struct snd_kcontrol *kcontrol,
 	return changed;
 }
 
-static struct snd_kcontrol_new snd_bt87x_capture_source = {
+static const struct snd_kcontrol_new snd_bt87x_capture_source = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Capture Source",
 	.info = snd_bt87x_capture_source_info,
@@ -690,8 +690,7 @@ static int snd_bt87x_free(struct snd_bt87x *chip)
 		snd_bt87x_stop(chip);
 	if (chip->irq >= 0)
 		free_irq(chip->irq, chip);
-	if (chip->mmio)
-		iounmap(chip->mmio);
+	iounmap(chip->mmio);
 	pci_release_regions(chip->pci);
 	pci_disable_device(chip->pci);
 	kfree(chip);
@@ -796,7 +795,7 @@ fail:
 	  .driver_data = SND_BT87X_BOARD_ ## id }
 /* driver_data is the card id for that device */
 
-static DEFINE_PCI_DEVICE_TABLE(snd_bt87x_ids) = {
+static const struct pci_device_id snd_bt87x_ids[] = {
 	/* Hauppauge WinTV series */
 	BT_DEVICE(PCI_DEVICE_ID_BROOKTREE_878, 0x0070, 0x13eb, GENERIC),
 	/* Hauppauge WinTV series */
@@ -966,7 +965,7 @@ static void snd_bt87x_remove(struct pci_dev *pci)
 
 /* default entries for all Bt87x cards - it's not exported */
 /* driver_data is set to 0 to call detection */
-static DEFINE_PCI_DEVICE_TABLE(snd_bt87x_default_ids) = {
+static const struct pci_device_id snd_bt87x_default_ids[] = {
 	BT_DEVICE(PCI_DEVICE_ID_BROOKTREE_878, PCI_ANY_ID, PCI_ANY_ID, UNKNOWN),
 	BT_DEVICE(PCI_DEVICE_ID_BROOKTREE_879, PCI_ANY_ID, PCI_ANY_ID, UNKNOWN),
 	{ }

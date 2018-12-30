@@ -1,12 +1,7 @@
-/*
- *
- * Copyright (c) 2004 Nex Vision
- *   Guillaume GOURAT <guillaume.gourat@nexvision.fr>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2004 Nex Vision
+//   Guillaume GOURAT <guillaume.gourat@nexvision.fr>
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -122,5 +117,4 @@ MACHINE_START(OTOM, "Nex Vision - Otom 1.1")
 	.init_machine	= otom11_init,
 	.init_irq	= s3c2410_init_irq,
 	.init_time	= otom11_init_time,
-	.restart	= s3c2410_restart,
 MACHINE_END

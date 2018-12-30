@@ -24,7 +24,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/memstick.h>
-#include <linux/mfd/rtsx_pci.h>
+#include <linux/rtsx_pci.h>
 #include <asm/unaligned.h>
 
 struct realtek_pci_ms {
@@ -645,7 +645,6 @@ static struct platform_driver rtsx_pci_ms_driver = {
 	.suspend	= rtsx_pci_ms_suspend,
 	.resume		= rtsx_pci_ms_resume,
 	.driver		= {
-		.owner	= THIS_MODULE,
 		.name	= DRV_NAME_RTSX_PCI_MS,
 	},
 };

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * fsl_spdif.h - ALSA S/PDIF interface for the Freescale i.MX SoC
  *
@@ -8,10 +9,6 @@
  * Based on fsl_ssi.h
  * Author: Timur Tabi <timur@freescale.com>
  * Copyright 2007-2008 Freescale Semiconductor, Inc.
- *
- * This file is licensed under the terms of the GNU General Public License
- * version 2.  This program  is licensed "as is" without any warranty of any
- * kind, whether express or implied.
  */
 
 #ifndef _FSL_SPDIF_DAI_H
@@ -93,6 +90,8 @@
 #define SCR_USRC_SEL_RECV		(0x1 << SCR_USRC_SEL_OFFSET)
 #define SCR_USRC_SEL_CHIP		(0x3 << SCR_USRC_SEL_OFFSET)
 
+#define SCR_DMA_xX_EN(tx)		(tx ? SCR_DMA_TX_EN : SCR_DMA_RX_EN)
+
 /* SPDIF CDText control */
 #define SRCD_CD_USER_OFFSET		1
 #define SRCD_CD_USER			(1 << SRCD_CD_USER_OFFSET)
@@ -164,8 +163,10 @@ enum spdif_txrate {
 	SPDIF_TXRATE_32000 = 0,
 	SPDIF_TXRATE_44100,
 	SPDIF_TXRATE_48000,
+	SPDIF_TXRATE_96000,
+	SPDIF_TXRATE_192000,
 };
-#define SPDIF_TXRATE_MAX		(SPDIF_TXRATE_48000 + 1)
+#define SPDIF_TXRATE_MAX		(SPDIF_TXRATE_192000 + 1)
 
 
 #define SPDIF_CSTATUS_BYTE		6
@@ -175,7 +176,9 @@ enum spdif_txrate {
 
 #define FSL_SPDIF_RATES_PLAYBACK	(SNDRV_PCM_RATE_32000 |	\
 					 SNDRV_PCM_RATE_44100 |	\
-					 SNDRV_PCM_RATE_48000)
+					 SNDRV_PCM_RATE_48000 |	\
+					 SNDRV_PCM_RATE_96000 |	\
+					 SNDRV_PCM_RATE_192000)
 
 #define FSL_SPDIF_RATES_CAPTURE		(SNDRV_PCM_RATE_16000 | \
 					 SNDRV_PCM_RATE_32000 |	\

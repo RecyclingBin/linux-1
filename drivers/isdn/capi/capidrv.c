@@ -9,6 +9,7 @@
  *
  */
 
+#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -506,14 +507,17 @@ static void send_message(capidrv_contr *card, _cmsg *cmsg)
 	struct sk_buff *skb;
 	size_t len;
 
-	capi_cmsg2message(cmsg, cmsg->buf);
+	if (capi_cmsg2message(cmsg, cmsg->buf)) {
+		printk(KERN_ERR "capidrv::send_message: parser failure\n");
+		return;
+	}
 	len = CAPIMSG_LEN(cmsg->buf);
 	skb = alloc_skb(len, GFP_ATOMIC);
 	if (!skb) {
 		printk(KERN_ERR "capidrv::send_message: can't allocate mem\n");
 		return;
 	}
-	memcpy(skb_put(skb, len), cmsg->buf, len);
+	skb_put_data(skb, cmsg->buf, len);
 	if (capi20_put_message(&global.ap, skb) != CAPI_NOERROR)
 		kfree_skb(skb);
 }
@@ -1578,7 +1582,12 @@ static _cmsg s_cmsg;
 
 static void capidrv_recv_message(struct capi20_appl *ap, struct sk_buff *skb)
 {
-	capi_message2cmsg(&s_cmsg, skb->data);
+	if (capi_message2cmsg(&s_cmsg, skb->data)) {
+		printk(KERN_ERR "capidrv: applid=%d: received invalid message\n",
+		       ap->applid);
+		kfree_skb(skb);
+		return;
+	}
 	if (debugmode > 3) {
 		_cdebbuf *cdb = capi_cmsg2str(&s_cmsg);
 
@@ -1903,7 +1912,11 @@ static int capidrv_command(isdn_ctrl *c, capidrv_contr *card)
 				       NULL,	/* Useruserdata */
 				       NULL	/* Facilitydataarray */
 			);
-		capi_cmsg2message(&cmdcmsg, cmdcmsg.buf);
+		if (capi_cmsg2message(&cmdcmsg, cmdcmsg.buf)) {
+			printk(KERN_ERR "capidrv-%d: capidrv_command: parser failure\n",
+			       card->contrnr);
+			return -EINVAL;
+		}
 		plci_change_state(card, bchan->plcip, EV_PLCI_CONNECT_RESP);
 		send_message(card, &cmdcmsg);
 		return 0;
@@ -2090,7 +2103,11 @@ static int if_sendbuf(int id, int channel, int doack, struct sk_buff *skb)
 	if (capidrv_add_ack(nccip, datahandle, doack ? (int)skb->len : -1) < 0)
 		return 0;
 
-	capi_cmsg2message(&sendcmsg, sendcmsg.buf);
+	if (capi_cmsg2message(&sendcmsg, sendcmsg.buf)) {
+		printk(KERN_ERR "capidrv-%d: if_sendbuf: parser failure\n",
+		       card->contrnr);
+		return -EINVAL;
+	}
 	msglen = CAPIMSG_LEN(sendcmsg.buf);
 	if (skb_headroom(skb) < msglen) {
 		struct sk_buff *nskb = skb_realloc_headroom(skb, msglen);
@@ -2219,9 +2236,9 @@ static void send_listen(capidrv_contr *card)
 	send_message(card, &cmdcmsg);
 }
 
-static void listentimerfunc(unsigned long x)
+static void listentimerfunc(struct timer_list *t)
 {
-	capidrv_contr *card = (capidrv_contr *)x;
+	capidrv_contr *card = from_timer(card, t, listentimer);
 	if (card->state != ST_LISTEN_NONE && card->state != ST_LISTEN_ACTIVE)
 		printk(KERN_ERR "%s: controller dead ??\n", card->name);
 	send_listen(card);
@@ -2248,11 +2265,12 @@ static int capidrv_addcontr(u16 contr, struct capi_profile *profp)
 		return -1;
 	}
 	card->owner = THIS_MODULE;
-	init_timer(&card->listentimer);
+	timer_setup(&card->listentimer, listentimerfunc, 0);
 	strcpy(card->name, id);
 	card->contrnr = contr;
 	card->nbchan = profp->nbchannel;
-	card->bchans = kmalloc(sizeof(capidrv_bchan) * card->nbchan, GFP_ATOMIC);
+	card->bchans = kmalloc_array(card->nbchan, sizeof(capidrv_bchan),
+				     GFP_ATOMIC);
 	if (!card->bchans) {
 		printk(KERN_WARNING
 		       "capidrv: (%s) Could not allocate bchan-structs.\n", id);
@@ -2315,8 +2333,6 @@ static int capidrv_addcontr(u16 contr, struct capi_profile *profp)
 	card->cipmask = 0x1FFF03FF;	/* any */
 	card->cipmask2 = 0;
 
-	card->listentimer.data = (unsigned long)card;
-	card->listentimer.function = listentimerfunc;
 	send_listen(card);
 	mod_timer(&card->listentimer, jiffies + 60 * HZ);
 
@@ -2436,7 +2452,7 @@ lower_callback(struct notifier_block *nb, unsigned long val, void *v)
  * /proc/capi/capidrv:
  * nrecvctlpkt nrecvdatapkt nsendctlpkt nsenddatapkt
  */
-static int capidrv_proc_show(struct seq_file *m, void *v)
+static int __maybe_unused capidrv_proc_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%lu %lu %lu %lu\n",
 		   global.ap.nrecvctlpkt,
@@ -2446,22 +2462,9 @@ static int capidrv_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int capidrv_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, capidrv_proc_show, NULL);
-}
-
-static const struct file_operations capidrv_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= capidrv_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 static void __init proc_init(void)
 {
-	proc_create("capi/capidrv", 0, NULL, &capidrv_proc_fops);
+	proc_create_single("capi/capidrv", 0, NULL, capidrv_proc_show);
 }
 
 static void __exit proc_exit(void)

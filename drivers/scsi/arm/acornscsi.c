@@ -677,7 +677,8 @@ int round_period(unsigned int period)
  * Copyright: Copyright (c) 1996 John Shifflett, GeoLog Consulting
  */
 static
-unsigned char calc_sync_xfer(unsigned int period, unsigned int offset)
+unsigned char __maybe_unused calc_sync_xfer(unsigned int period,
+					    unsigned int offset)
 {
     return sync_xfer_table[round_period(period)].reg_value |
 		((offset < SDTR_SIZE) ? offset : SDTR_SIZE);
@@ -760,7 +761,8 @@ intr_ret_t acornscsi_kick(AS_Host *host)
 	    SCpnt->tag = SCpnt->device->current_tag;
 	} else
 #endif
-	    set_bit(SCpnt->device->id * 8 + SCpnt->device->lun, host->busyluns);
+	    set_bit(SCpnt->device->id * 8 +
+		    (u8)(SCpnt->device->lun & 0x07), host->busyluns);
 
 	host->stats.removes += 1;
 
@@ -849,13 +851,13 @@ static void acornscsi_done(AS_Host *host, struct scsi_cmnd **SCpntp,
 			break;
 
 		    default:
-			printk(KERN_ERR "scsi%d.H: incomplete data transfer detected: result=%08X command=",
-				host->host->host_no, SCpnt->result);
-			__scsi_print_command(SCpnt->cmnd);
+			scmd_printk(KERN_ERR, SCpnt,
+				    "incomplete data transfer detected: "
+				    "result=%08X", SCpnt->result);
+			scsi_print_command(SCpnt);
 			acornscsi_dumpdma(host, "done");
-		 	acornscsi_dumplog(host, SCpnt->device->id);
-			SCpnt->result &= 0xffff;
-			SCpnt->result |= DID_ERROR << 16;
+			acornscsi_dumplog(host, SCpnt->device->id);
+			set_host_byte(SCpnt, DID_ERROR);
 		    }
 		}
 	}
@@ -863,7 +865,8 @@ static void acornscsi_done(AS_Host *host, struct scsi_cmnd **SCpntp,
 	if (!SCpnt->scsi_done)
 	    panic("scsi%d.H: null scsi_done function in acornscsi_done", host->host->host_no);
 
-	clear_bit(SCpnt->device->id * 8 + SCpnt->device->lun, host->busyluns);
+	clear_bit(SCpnt->device->id * 8 +
+		  (u8)(SCpnt->device->lun & 0x7), host->busyluns);
 
 	SCpnt->scsi_done(SCpnt);
     } else
@@ -1576,7 +1579,8 @@ void acornscsi_message(AS_Host *host)
 	    printk(KERN_NOTICE "scsi%d.%c: disabling tagged queueing\n",
 		    host->host->host_no, acornscsi_target(host));
 	    host->SCpnt->device->simple_tags = 0;
-	    set_bit(host->SCpnt->device->id * 8 + host->SCpnt->device->lun, host->busyluns);
+	    set_bit(host->SCpnt->device->id * 8 +
+		    (u8)(host->SCpnt->device->lun & 0x7), host->busyluns);
 	    break;
 #endif
 	case EXTENDED_MESSAGE | (EXTENDED_SDTR << 8):
@@ -2671,7 +2675,8 @@ int acornscsi_abort(struct scsi_cmnd *SCpnt)
 //#if (DEBUG & DEBUG_ABORT)
 		printk("clear ");
 //#endif
-		clear_bit(SCpnt->device->id * 8 + SCpnt->device->lun, host->busyluns);
+		clear_bit(SCpnt->device->id * 8 +
+			  (u8)(SCpnt->device->lun & 0x7), host->busyluns);
 
 	/*
 	 * We found the command, and cleared it out.  Either
@@ -2720,7 +2725,7 @@ int acornscsi_abort(struct scsi_cmnd *SCpnt)
  * Params   : SCpnt  - command causing reset
  * Returns  : one of SCSI_RESET_ macros
  */
-int acornscsi_bus_reset(struct scsi_cmnd *SCpnt)
+int acornscsi_host_reset(struct scsi_cmnd *SCpnt)
 {
 	AS_Host *host = (AS_Host *)SCpnt->device->host->hostdata;
 	struct scsi_cmnd *SCptr;
@@ -2729,14 +2734,15 @@ int acornscsi_bus_reset(struct scsi_cmnd *SCpnt)
 
 #if (DEBUG & DEBUG_RESET)
     {
-	int asr, ssr;
+	int asr, ssr, devidx;
 
 	asr = sbic_arm_read(host, SBIC_ASR);
 	ssr = sbic_arm_read(host, SBIC_SSR);
 
 	printk(KERN_WARNING "acornscsi_reset: ");
 	print_sbic_status(asr, ssr, host->scsi.phase);
-	acornscsi_dumplog(host, SCpnt->device->id);
+	for (devidx = 0; devidx < 9; devidx++)
+	    acornscsi_dumplog(host, devidx);
     }
 #endif
 
@@ -2853,7 +2859,7 @@ static int acornscsi_show_info(struct seq_file *m, struct Scsi_Host *instance)
 
     shost_for_each_device(scd, instance) {
 	seq_printf(m, "Device/Lun TaggedQ      Sync\n");
-	seq_printf(m, "     %d/%d   ", scd->id, scd->lun);
+	seq_printf(m, "     %d/%llu   ", scd->id, scd->lun);
 	if (scd->tagged_supported)
 		seq_printf(m, "%3sabled(%3d) ",
 			     scd->simple_tags ? "en" : "dis",
@@ -2879,12 +2885,12 @@ static struct scsi_host_template acornscsi_template = {
 	.info			= acornscsi_info,
 	.queuecommand		= acornscsi_queuecmd,
 	.eh_abort_handler	= acornscsi_abort,
-	.eh_bus_reset_handler	= acornscsi_bus_reset,
+	.eh_host_reset_handler	= acornscsi_host_reset,
 	.can_queue		= 16,
 	.this_id		= 7,
 	.sg_tablesize		= SG_ALL,
 	.cmd_per_lun		= 2,
-	.use_clustering		= DISABLE_CLUSTERING,
+	.dma_boundary		= PAGE_SIZE - 1,
 	.proc_name		= "acornscsi",
 };
 

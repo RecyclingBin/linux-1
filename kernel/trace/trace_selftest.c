@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /* Include in trace.c */
 
+#include <uapi/linux/sched/types.h>
 #include <linux/stringify.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
@@ -58,7 +60,7 @@ static int trace_test_buffer_cpu(struct trace_buffer *buf, int cpu)
  * Test the trace buffer to see if all the elements
  * are still sane.
  */
-static int trace_test_buffer(struct trace_buffer *buf, unsigned long *count)
+static int __maybe_unused trace_test_buffer(struct trace_buffer *buf, unsigned long *count)
 {
 	unsigned long flags, cnt = 0;
 	int cpu, ret = 0;
@@ -272,7 +274,7 @@ static int trace_selftest_ops(struct trace_array *tr, int cnt)
 		goto out_free;
 	if (cnt > 1) {
 		if (trace_selftest_test_global_cnt == 0)
-			goto out;
+			goto out_free;
 	}
 	if (trace_selftest_test_dyn_cnt == 0)
 		goto out_free;
@@ -382,6 +384,8 @@ static int trace_selftest_startup_dynamic_tracing(struct tracer *trace,
 
 	/* check the trace buffer */
 	ret = trace_test_buffer(&tr->trace_buffer, &count);
+
+	ftrace_enabled = 1;
 	tracing_start();
 
 	/* we should only have one item */
@@ -679,6 +683,8 @@ trace_selftest_startup_function(struct tracer *trace, struct trace_array *tr)
 
 	/* check the trace buffer */
 	ret = trace_test_buffer(&tr->trace_buffer, &count);
+
+	ftrace_enabled = 1;
 	trace->reset(tr);
 	tracing_start();
 
@@ -1025,6 +1031,12 @@ trace_selftest_startup_nop(struct tracer *trace, struct trace_array *tr)
 #endif
 
 #ifdef CONFIG_SCHED_TRACER
+
+struct wakeup_test_data {
+	struct completion	is_ready;
+	int			go;
+};
+
 static int trace_wakeup_test_thread(void *data)
 {
 	/* Make this a -deadline thread */
@@ -1034,51 +1046,56 @@ static int trace_wakeup_test_thread(void *data)
 		.sched_deadline = 10000000ULL,
 		.sched_period = 10000000ULL
 	};
-	struct completion *x = data;
+	struct wakeup_test_data *x = data;
 
 	sched_setattr(current, &attr);
 
 	/* Make it know we have a new prio */
-	complete(x);
+	complete(&x->is_ready);
 
 	/* now go to sleep and let the test wake us up */
 	set_current_state(TASK_INTERRUPTIBLE);
-	schedule();
+	while (!x->go) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
 
-	complete(x);
+	complete(&x->is_ready);
+
+	set_current_state(TASK_INTERRUPTIBLE);
 
 	/* we are awake, now wait to disappear */
 	while (!kthread_should_stop()) {
-		/*
-		 * This will likely be the system top priority
-		 * task, do short sleeps to let others run.
-		 */
-		msleep(100);
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
 	}
+
+	__set_current_state(TASK_RUNNING);
 
 	return 0;
 }
-
 int
 trace_selftest_startup_wakeup(struct tracer *trace, struct trace_array *tr)
 {
 	unsigned long save_max = tr->max_latency;
 	struct task_struct *p;
-	struct completion is_ready;
+	struct wakeup_test_data data;
 	unsigned long count;
 	int ret;
 
-	init_completion(&is_ready);
+	memset(&data, 0, sizeof(data));
+
+	init_completion(&data.is_ready);
 
 	/* create a -deadline thread */
-	p = kthread_run(trace_wakeup_test_thread, &is_ready, "ftrace-test");
+	p = kthread_run(trace_wakeup_test_thread, &data, "ftrace-test");
 	if (IS_ERR(p)) {
 		printk(KERN_CONT "Failed to create ftrace wakeup test thread ");
 		return -1;
 	}
 
 	/* make sure the thread is running at -deadline policy */
-	wait_for_completion(&is_ready);
+	wait_for_completion(&data.is_ready);
 
 	/* start the tracing */
 	ret = tracer_init(trace, tr);
@@ -1099,18 +1116,20 @@ trace_selftest_startup_wakeup(struct tracer *trace, struct trace_array *tr)
 		msleep(100);
 	}
 
-	init_completion(&is_ready);
+	init_completion(&data.is_ready);
+
+	data.go = 1;
+	/* memory barrier is in the wake_up_process() */
 
 	wake_up_process(p);
 
 	/* Wait for the task to wake up */
-	wait_for_completion(&is_ready);
+	wait_for_completion(&data.is_ready);
 
 	/* stop the tracing. */
 	tracing_stop();
 	/* check both trace buffers */
 	ret = trace_test_buffer(&tr->trace_buffer, NULL);
-	printk("ret = %d\n", ret);
 	if (!ret)
 		ret = trace_test_buffer(&tr->max_buffer, &count);
 
@@ -1131,38 +1150,6 @@ trace_selftest_startup_wakeup(struct tracer *trace, struct trace_array *tr)
 	return ret;
 }
 #endif /* CONFIG_SCHED_TRACER */
-
-#ifdef CONFIG_CONTEXT_SWITCH_TRACER
-int
-trace_selftest_startup_sched_switch(struct tracer *trace, struct trace_array *tr)
-{
-	unsigned long count;
-	int ret;
-
-	/* start the tracing */
-	ret = tracer_init(trace, tr);
-	if (ret) {
-		warn_failed_init_tracer(trace, ret);
-		return ret;
-	}
-
-	/* Sleep for a 1/10 of a second */
-	msleep(100);
-	/* stop the tracing. */
-	tracing_stop();
-	/* check the trace buffer */
-	ret = trace_test_buffer(&tr->trace_buffer, &count);
-	trace->reset(tr);
-	tracing_start();
-
-	if (!ret && !count) {
-		printk(KERN_CONT ".. no entries found ..");
-		ret = -1;
-	}
-
-	return ret;
-}
-#endif /* CONFIG_CONTEXT_SWITCH_TRACER */
 
 #ifdef CONFIG_BRANCH_TRACER
 int

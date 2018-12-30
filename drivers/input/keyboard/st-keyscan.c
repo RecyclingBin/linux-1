@@ -106,8 +106,8 @@ static int keypad_matrix_key_parse_dt(struct st_keyscan *keypad_data)
 	struct device_node *np = dev->of_node;
 	int error;
 
-	error = matrix_keypad_parse_of_params(dev, &keypad_data->n_rows,
-					      &keypad_data->n_cols);
+	error = matrix_keypad_parse_properties(dev, &keypad_data->n_rows,
+					       &keypad_data->n_cols);
 	if (error) {
 		dev_err(dev, "failed to parse keypad params\n");
 		return error;
@@ -215,6 +215,7 @@ static int keyscan_probe(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int keyscan_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
@@ -249,6 +250,7 @@ static int keyscan_resume(struct device *dev)
 	mutex_unlock(&input->mutex);
 	return retval;
 }
+#endif
 
 static SIMPLE_DEV_PM_OPS(keyscan_dev_pm_ops, keyscan_suspend, keyscan_resume);
 

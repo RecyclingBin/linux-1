@@ -114,6 +114,46 @@ static int armada370_wdt_clock_init(struct platform_device *pdev,
 	return 0;
 }
 
+static int armada375_wdt_clock_init(struct platform_device *pdev,
+				    struct orion_watchdog *dev)
+{
+	int ret;
+
+	dev->clk = of_clk_get_by_name(pdev->dev.of_node, "fixed");
+	if (!IS_ERR(dev->clk)) {
+		ret = clk_prepare_enable(dev->clk);
+		if (ret) {
+			clk_put(dev->clk);
+			return ret;
+		}
+
+		atomic_io_modify(dev->reg + TIMER_CTRL,
+				WDT_AXP_FIXED_ENABLE_BIT,
+				WDT_AXP_FIXED_ENABLE_BIT);
+		dev->clk_rate = clk_get_rate(dev->clk);
+
+		return 0;
+	}
+
+	/* Mandatory fallback for proper devicetree backward compatibility */
+	dev->clk = clk_get(&pdev->dev, NULL);
+	if (IS_ERR(dev->clk))
+		return PTR_ERR(dev->clk);
+
+	ret = clk_prepare_enable(dev->clk);
+	if (ret) {
+		clk_put(dev->clk);
+		return ret;
+	}
+
+	atomic_io_modify(dev->reg + TIMER_CTRL,
+			WDT_A370_RATIO_MASK(WDT_A370_RATIO_SHIFT),
+			WDT_A370_RATIO_MASK(WDT_A370_RATIO_SHIFT));
+	dev->clk_rate = clk_get_rate(dev->clk) / WDT_A370_RATIO;
+
+	return 0;
+}
+
 static int armadaxp_wdt_clock_init(struct platform_device *pdev,
 				   struct orion_watchdog *dev)
 {
@@ -355,7 +395,7 @@ static void __iomem *orion_wdt_ioremap_rstout(struct platform_device *pdev,
 
 	rstout = internal_regs + ORION_RSTOUT_MASK_OFFSET;
 
-	WARN(1, FW_BUG "falling back to harcoded RSTOUT reg %pa\n", &rstout);
+	WARN(1, FW_BUG "falling back to hardcoded RSTOUT reg %pa\n", &rstout);
 	return devm_ioremap(&pdev->dev, rstout, 0x4);
 }
 
@@ -394,7 +434,7 @@ static const struct orion_watchdog_data armada375_data = {
 	.rstout_mask_bit = BIT(10),
 	.wdt_enable_bit = BIT(8),
 	.wdt_counter_offset = 0x34,
-	.clock_init = armada370_wdt_clock_init,
+	.clock_init = armada375_wdt_clock_init,
 	.enabled = armada375_enabled,
 	.start = armada375_start,
 	.stop = armada375_stop,
@@ -527,6 +567,7 @@ static int orion_wdt_probe(struct platform_device *pdev)
 
 	dev->wdt.timeout = wdt_max_duration;
 	dev->wdt.max_timeout = wdt_max_duration;
+	dev->wdt.parent = &pdev->dev;
 	watchdog_init_timeout(&dev->wdt, heartbeat, &pdev->dev);
 
 	platform_set_drvdata(pdev, &dev->wdt);
@@ -535,11 +576,13 @@ static int orion_wdt_probe(struct platform_device *pdev)
 	/*
 	 * Let's make sure the watchdog is fully stopped, unless it's
 	 * explicitly enabled. This may be the case if the module was
-	 * removed and re-insterted, or if the bootloader explicitly
+	 * removed and re-inserted, or if the bootloader explicitly
 	 * set a running watchdog before booting the kernel.
 	 */
 	if (!orion_wdt_enabled(&dev->wdt))
 		orion_wdt_stop(&dev->wdt);
+	else
+		set_bit(WDOG_HW_RUNNING, &dev->wdt.status);
 
 	/* Request the IRQ only after the watchdog is disabled */
 	irq = platform_get_irq(pdev, 0);
@@ -593,7 +636,6 @@ static struct platform_driver orion_wdt_driver = {
 	.remove		= orion_wdt_remove,
 	.shutdown	= orion_wdt_shutdown,
 	.driver		= {
-		.owner	= THIS_MODULE,
 		.name	= "orion_wdt",
 		.of_match_table = orion_wdt_of_match_table,
 	},
@@ -611,5 +653,5 @@ module_param(nowayout, bool, 0);
 MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:orion_wdt");

@@ -1,19 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2006-2007 Silicon Graphics, Inc.
  * All Rights Reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it would be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write the Free Software Foundation,
- * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_mru_cache.h"
@@ -112,6 +100,7 @@ struct xfs_mru_cache {
 	xfs_mru_cache_free_func_t free_func; /* Function pointer for freeing. */
 	struct delayed_work	work;      /* Workqueue data for reaping.   */
 	unsigned int		queued;	   /* work has been queued */
+	void			*data;
 };
 
 static struct workqueue_struct	*xfs_mru_reap_wq;
@@ -259,7 +248,7 @@ _xfs_mru_cache_clear_reap_list(
 
 	list_for_each_entry_safe(elem, next, &tmp, list_node) {
 		list_del_init(&elem->list_node);
-		mru->free_func(elem);
+		mru->free_func(mru->data, elem);
 	}
 
 	spin_lock(&mru->lock);
@@ -304,7 +293,8 @@ _xfs_mru_cache_reap(
 int
 xfs_mru_cache_init(void)
 {
-	xfs_mru_reap_wq = alloc_workqueue("xfs_mru_cache", WQ_MEM_RECLAIM, 1);
+	xfs_mru_reap_wq = alloc_workqueue("xfs_mru_cache",
+				WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
 	if (!xfs_mru_reap_wq)
 		return -ENOMEM;
 	return 0;
@@ -325,6 +315,7 @@ xfs_mru_cache_uninit(void)
 int
 xfs_mru_cache_create(
 	struct xfs_mru_cache	**mrup,
+	void			*data,
 	unsigned int		lifetime_ms,
 	unsigned int		grp_count,
 	xfs_mru_cache_free_func_t free_func)
@@ -337,20 +328,20 @@ xfs_mru_cache_create(
 		*mrup = NULL;
 
 	if (!mrup || !grp_count || !lifetime_ms || !free_func)
-		return EINVAL;
+		return -EINVAL;
 
 	if (!(grp_time = msecs_to_jiffies(lifetime_ms) / grp_count))
-		return EINVAL;
+		return -EINVAL;
 
 	if (!(mru = kmem_zalloc(sizeof(*mru), KM_SLEEP)))
-		return ENOMEM;
+		return -ENOMEM;
 
 	/* An extra list is needed to avoid reaping up to a grp_time early. */
 	mru->grp_count = grp_count + 1;
 	mru->lists = kmem_zalloc(mru->grp_count * sizeof(*mru->lists), KM_SLEEP);
 
 	if (!mru->lists) {
-		err = ENOMEM;
+		err = -ENOMEM;
 		goto exit;
 	}
 
@@ -368,7 +359,7 @@ xfs_mru_cache_create(
 
 	mru->grp_time  = grp_time;
 	mru->free_func = free_func;
-
+	mru->data = data;
 	*mrup = mru;
 
 exit:
@@ -434,16 +425,16 @@ xfs_mru_cache_insert(
 
 	ASSERT(mru && mru->lists);
 	if (!mru || !mru->lists)
-		return EINVAL;
+		return -EINVAL;
 
-	if (radix_tree_preload(GFP_KERNEL))
-		return ENOMEM;
+	if (radix_tree_preload(GFP_NOFS))
+		return -ENOMEM;
 
 	INIT_LIST_HEAD(&elem->list_node);
 	elem->key = key;
 
 	spin_lock(&mru->lock);
-	error = -radix_tree_insert(&mru->store, key, elem);
+	error = radix_tree_insert(&mru->store, key, elem);
 	radix_tree_preload_end();
 	if (!error)
 		_xfs_mru_cache_list_insert(mru, elem);
@@ -491,7 +482,7 @@ xfs_mru_cache_delete(
 
 	elem = xfs_mru_cache_remove(mru, key);
 	if (elem)
-		mru->free_func(elem);
+		mru->free_func(mru->data, elem);
 }
 
 /*

@@ -1,15 +1,10 @@
-/* linux/arch/arm/mach-s3c2412/mach-smdk2413.c
- *
- * Copyright (c) 2006 Simtec Electronics
- *	Ben Dooks <ben@simtec.co.uk>
- *
- * Thanks to Dimity Andric (TomTom) and Steven Ryu (Samsung) for the
- * loans of SMDK2413 to work with.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2006 Simtec Electronics
+//	Ben Dooks <ben@simtec.co.uk>
+//
+// Thanks to Dimity Andric (TomTom) and Steven Ryu (Samsung) for the
+// loans of SMDK2413 to work with.
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -43,7 +38,6 @@
 #include <mach/gpio-samsung.h>
 #include <mach/fb.h>
 
-#include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/samsung-time.h>
@@ -139,7 +133,6 @@ MACHINE_START(S3C2413, "S3C2413")
 	.map_io		= smdk2413_map_io,
 	.init_machine	= smdk2413_machine_init,
 	.init_time	= samsung_timer_init,
-	.restart	= s3c2412_restart,
 MACHINE_END
 
 MACHINE_START(SMDK2412, "SMDK2412")
@@ -151,7 +144,6 @@ MACHINE_START(SMDK2412, "SMDK2412")
 	.map_io		= smdk2413_map_io,
 	.init_machine	= smdk2413_machine_init,
 	.init_time	= samsung_timer_init,
-	.restart	= s3c2412_restart,
 MACHINE_END
 
 MACHINE_START(SMDK2413, "SMDK2413")
@@ -163,5 +155,4 @@ MACHINE_START(SMDK2413, "SMDK2413")
 	.map_io		= smdk2413_map_io,
 	.init_machine	= smdk2413_machine_init,
 	.init_time	= smdk2413_init_time,
-	.restart	= s3c2412_restart,
 MACHINE_END

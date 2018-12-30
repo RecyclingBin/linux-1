@@ -82,7 +82,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/ptrace.h>
@@ -184,12 +184,10 @@ static int pmc551_erase(struct mtd_info *mtd, struct erase_info *instr)
 	}
 
       out:
-	instr->state = MTD_ERASE_DONE;
 #ifdef CONFIG_MTD_PMC551_DEBUG
 	printk(KERN_DEBUG "pmc551_erase() done\n");
 #endif
 
-	mtd_erase_callback(instr);
 	return 0;
 }
 
@@ -353,7 +351,7 @@ static int pmc551_write(struct mtd_info *mtd, loff_t to, size_t len,
  * mechanism
  * returns the size of the memory region found.
  */
-static int fixup_pmc551(struct pci_dev *dev)
+static int __init fixup_pmc551(struct pci_dev *dev)
 {
 #ifdef CONFIG_MTD_PMC551_BUGFIX
 	u32 dram_data;
@@ -812,8 +810,7 @@ static int __init init_pmc551(void)
 	}
 
 	/* Exited early, reference left over */
-	if (PCI_Device)
-		pci_dev_put(PCI_Device);
+	pci_dev_put(PCI_Device);
 
 	if (!pmc551list) {
 		printk(KERN_NOTICE "pmc551: not detected\n");

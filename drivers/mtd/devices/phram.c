@@ -17,7 +17,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <asm/io.h>
+#include <linux/io.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -39,13 +39,6 @@ static int phram_erase(struct mtd_info *mtd, struct erase_info *instr)
 
 	memset(start + instr->addr, 0xff, instr->len);
 
-	/*
-	 * This'll catch a few races. Free the thing before returning :)
-	 * I don't feel at all ashamed. This kind of thing is possible anyway
-	 * with flash, but unlikely.
-	 */
-	instr->state = MTD_ERASE_DONE;
-	mtd_erase_callback(instr);
 	return 0;
 }
 
@@ -181,11 +174,9 @@ static int parse_name(char **pname, const char *token)
 	if (len > 64)
 		return -ENOSPC;
 
-	name = kmalloc(len, GFP_KERNEL);
+	name = kstrdup(token, GFP_KERNEL);
 	if (!name)
 		return -ENOMEM;
-
-	strcpy(name, token);
 
 	*pname = name;
 	return 0;
@@ -195,6 +186,7 @@ static int parse_name(char **pname, const char *token)
 static inline void kill_final_newline(char *str)
 {
 	char *newline = strrchr(str, '\n');
+
 	if (newline && !newline[1])
 		*newline = 0;
 }
@@ -233,7 +225,7 @@ static int phram_setup(const char *val)
 	strcpy(str, val);
 	kill_final_newline(str);
 
-	for (i=0; i<3; i++)
+	for (i = 0; i < 3; i++)
 		token[i] = strsep(&str, ",");
 
 	if (str)
@@ -267,7 +259,7 @@ static int phram_setup(const char *val)
 	return ret;
 }
 
-static int phram_param_call(const char *val, struct kernel_param *kp)
+static int phram_param_call(const char *val, const struct kernel_param *kp)
 {
 #ifdef MODULE
 	return phram_setup(val);

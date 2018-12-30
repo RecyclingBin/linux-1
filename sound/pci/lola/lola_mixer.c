@@ -108,8 +108,7 @@ int lola_init_pins(struct lola *chip, int dir, int *nidp)
 
 void lola_free_mixer(struct lola *chip)
 {
-	if (chip->mixer.array_saved)
-		vfree(chip->mixer.array_saved);
+	vfree(chip->mixer.array_saved);
 }
 
 int lola_init_mixer_widget(struct lola *chip, int nid)
@@ -646,7 +645,7 @@ static int lola_input_src_put(struct snd_kcontrol *kcontrol,
 	return lola_set_src_config(chip, mask, true);
 }
 
-static struct snd_kcontrol_new lola_input_src_mixer = {
+static const struct snd_kcontrol_new lola_input_src_mixer = {
 	.name = "Digital SRC Capture Switch",
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.info = lola_input_src_info,

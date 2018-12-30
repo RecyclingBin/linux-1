@@ -5,12 +5,12 @@
  * See LICENSE.qlcnic for copyright and licensing details.
  */
 
-#include "qlcnic.h"
-#include "qlcnic_hdr.h"
-
 #include <linux/slab.h>
 #include <net/ip.h>
 #include <linux/bitops.h>
+
+#include "qlcnic.h"
+#include "qlcnic_hdr.h"
 
 #define MASK(n) ((1ULL<<(n))-1)
 #define OCM_WIN_P3P(addr) (addr & 0xffc0000)
@@ -276,13 +276,6 @@ static const unsigned crb_hub_agt[64] = {
 	0,
 };
 
-static const u32 msi_tgt_status[8] = {
-	ISR_INT_TARGET_STATUS, ISR_INT_TARGET_STATUS_F1,
-	ISR_INT_TARGET_STATUS_F2, ISR_INT_TARGET_STATUS_F3,
-	ISR_INT_TARGET_STATUS_F4, ISR_INT_TARGET_STATUS_F5,
-	ISR_INT_TARGET_STATUS_F6, ISR_INT_TARGET_STATUS_F7
-};
-
 /*  PCI Windowing for DDR regions.  */
 
 #define QLCNIC_PCIE_SEM_TIMEOUT	10000
@@ -341,7 +334,7 @@ qlcnic_pcie_sem_lock(struct qlcnic_adapter *adapter, int sem, u32 id_reg)
 			}
 			return -EIO;
 		}
-		msleep(1);
+		udelay(1200);
 	}
 
 	if (id_reg)
@@ -487,7 +480,8 @@ int qlcnic_nic_del_mac(struct qlcnic_adapter *adapter, const u8 *addr)
 	return err;
 }
 
-int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter, const u8 *addr, u16 vlan)
+int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter, const u8 *addr, u16 vlan,
+		       enum qlcnic_mac_type mac_type)
 {
 	struct qlcnic_mac_vlan_list *cur;
 	struct list_head *head;
@@ -513,8 +507,27 @@ int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter, const u8 *addr, u16 vlan)
 	}
 
 	cur->vlan_id = vlan;
+	cur->mac_type = mac_type;
+
 	list_add_tail(&cur->list, &adapter->mac_list);
 	return 0;
+}
+
+void qlcnic_flush_mcast_mac(struct qlcnic_adapter *adapter)
+{
+	struct qlcnic_mac_vlan_list *cur;
+	struct list_head *head, *tmp;
+
+	list_for_each_safe(head, tmp, &adapter->mac_list) {
+		cur = list_entry(head, struct qlcnic_mac_vlan_list, list);
+		if (cur->mac_type != QLCNIC_MULTICAST_MAC)
+			continue;
+
+		qlcnic_sre_macaddr_change(adapter, cur->mac_addr,
+					  cur->vlan_id, QLCNIC_MAC_DEL);
+		list_del(&cur->list);
+		kfree(cur);
+	}
 }
 
 static void __qlcnic_set_multi(struct net_device *netdev, u16 vlan)
@@ -530,8 +543,9 @@ static void __qlcnic_set_multi(struct net_device *netdev, u16 vlan)
 	if (!test_bit(__QLCNIC_FW_ATTACHED, &adapter->state))
 		return;
 
-	qlcnic_nic_add_mac(adapter, adapter->mac_addr, vlan);
-	qlcnic_nic_add_mac(adapter, bcast_addr, vlan);
+	qlcnic_nic_add_mac(adapter, adapter->mac_addr, vlan,
+			   QLCNIC_UNICAST_MAC);
+	qlcnic_nic_add_mac(adapter, bcast_addr, vlan, QLCNIC_BROADCAST_MAC);
 
 	if (netdev->flags & IFF_PROMISC) {
 		if (!(adapter->flags & QLCNIC_PROMISC_DISABLED))
@@ -540,8 +554,10 @@ static void __qlcnic_set_multi(struct net_device *netdev, u16 vlan)
 		   (netdev_mc_count(netdev) > ahw->max_mc_count)) {
 		mode = VPORT_MISS_MODE_ACCEPT_MULTI;
 	} else if (!netdev_mc_empty(netdev)) {
+		qlcnic_flush_mcast_mac(adapter);
 		netdev_for_each_mc_addr(ha, netdev)
-			qlcnic_nic_add_mac(adapter, ha->addr, vlan);
+			qlcnic_nic_add_mac(adapter, ha->addr, vlan,
+					   QLCNIC_MULTICAST_MAC);
 	}
 
 	/* configure unicast MAC address, if there is not sufficient space
@@ -551,7 +567,8 @@ static void __qlcnic_set_multi(struct net_device *netdev, u16 vlan)
 		mode = VPORT_MISS_MODE_ACCEPT_ALL;
 	} else if (!netdev_uc_empty(netdev)) {
 		netdev_for_each_uc_addr(ha, netdev)
-			qlcnic_nic_add_mac(adapter, ha->addr, vlan);
+			qlcnic_nic_add_mac(adapter, ha->addr, vlan,
+					   QLCNIC_UNICAST_MAC);
 	}
 
 	if (mode == VPORT_MISS_MODE_ACCEPT_ALL &&
@@ -794,7 +811,7 @@ int qlcnic_82xx_config_intr_coalesce(struct qlcnic_adapter *adapter,
 
 	if (rv)
 		netdev_err(adapter->netdev,
-			   "Failed to set Rx coalescing parametrs\n");
+			   "Failed to set Rx coalescing parameters\n");
 
 	return rv;
 }
@@ -941,7 +958,7 @@ void qlcnic_82xx_config_ipaddr(struct qlcnic_adapter *adapter,
 	rv = qlcnic_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
 	if (rv != 0)
 		dev_err(&adapter->netdev->dev,
-				"could not notify %s IP 0x%x reuqest\n",
+				"could not notify %s IP 0x%x request\n",
 				(cmd == QLCNIC_IP_UP) ? "Add" : "Remove", ip);
 }
 
@@ -999,12 +1016,6 @@ int qlcnic_change_mtu(struct net_device *netdev, int mtu)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
 	int rc = 0;
-
-	if (mtu < P3P_MIN_MTU || mtu > P3P_MAX_MTU) {
-		dev_err(&adapter->netdev->dev, "%d bytes < mtu < %d bytes"
-			" not supported\n", P3P_MAX_MTU, P3P_MIN_MTU);
-		return -EINVAL;
-	}
 
 	rc = qlcnic_fw_cmd_set_mtu(adapter, mtu);
 

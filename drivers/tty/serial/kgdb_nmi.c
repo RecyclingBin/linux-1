@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * KGDB NMI serial console
  *
@@ -6,10 +7,6 @@
  *		  Colin Cross <ccross@android.com>
  * Copyright 2012 Linaro Ltd.
  *		  Anton Vorontsov <anton.vorontsov@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -42,10 +39,12 @@ static char *kgdb_nmi_magic = "$3#33";
 module_param_named(magic, kgdb_nmi_magic, charp, 0600);
 MODULE_PARM_DESC(magic, "magic sequence to enter NMI debugger (default $3#33)");
 
-static bool kgdb_nmi_tty_enabled;
+static atomic_t kgdb_nmi_num_readers = ATOMIC_INIT(0);
 
 static int kgdb_nmi_console_setup(struct console *co, char *options)
 {
+	arch_kgdb_ops.enable_nmi(1);
+
 	/* The NMI console uses the dbg_io_ops to issue console messages. To
 	 * avoid duplicate messages during kdb sessions we must inform kdb's
 	 * I/O utilities that messages sent to the console will automatically
@@ -77,7 +76,7 @@ static struct console kgdb_nmi_console = {
 	.setup  = kgdb_nmi_console_setup,
 	.write	= kgdb_nmi_console_write,
 	.device	= kgdb_nmi_console_device,
-	.flags	= CON_PRINTBUFFER | CON_ANYTIME | CON_ENABLED,
+	.flags	= CON_PRINTBUFFER | CON_ANYTIME,
 	.index	= -1,
 };
 
@@ -136,7 +135,7 @@ static int kgdb_nmi_poll_one_knock(void)
 		n = 0;
 	}
 
-	if (kgdb_nmi_tty_enabled) {
+	if (atomic_read(&kgdb_nmi_num_readers)) {
 		kgdb_tty_recv(c);
 		return 0;
 	}
@@ -171,33 +170,34 @@ static int kgdb_nmi_poll_one_knock(void)
 bool kgdb_nmi_poll_knock(void)
 {
 	if (kgdb_nmi_knock < 0)
-		return 1;
+		return true;
 
 	while (1) {
 		int ret;
 
 		ret = kgdb_nmi_poll_one_knock();
 		if (ret == NO_POLL_CHAR)
-			return 0;
+			return false;
 		else if (ret == 1)
 			break;
 	}
-	return 1;
+	return true;
 }
 
 /*
  * The tasklet is cheap, it does not cause wakeups when reschedules itself,
  * instead it waits for the next tick.
  */
-static void kgdb_nmi_tty_receiver(unsigned long data)
+static void kgdb_nmi_tty_receiver(struct timer_list *t)
 {
-	struct kgdb_nmi_tty_priv *priv = (void *)data;
+	struct kgdb_nmi_tty_priv *priv = from_timer(priv, t, timer);
 	char ch;
 
 	priv->timer.expires = jiffies + (HZ/100);
 	add_timer(&priv->timer);
 
-	if (likely(!kgdb_nmi_tty_enabled || !kfifo_len(&priv->fifo)))
+	if (likely(!atomic_read(&kgdb_nmi_num_readers) ||
+		   !kfifo_len(&priv->fifo)))
 		return;
 
 	while (kfifo_out(&priv->fifo, &ch, 1))
@@ -241,7 +241,7 @@ static int kgdb_nmi_tty_install(struct tty_driver *drv, struct tty_struct *tty)
 		return -ENOMEM;
 
 	INIT_KFIFO(priv->fifo);
-	setup_timer(&priv->timer, kgdb_nmi_tty_receiver, (unsigned long)priv);
+	timer_setup(&priv->timer, kgdb_nmi_tty_receiver, 0);
 	tty_port_init(&priv->port);
 	priv->port.ops = &kgdb_nmi_tty_port_ops;
 	tty->driver_data = priv;
@@ -270,13 +270,23 @@ static void kgdb_nmi_tty_cleanup(struct tty_struct *tty)
 static int kgdb_nmi_tty_open(struct tty_struct *tty, struct file *file)
 {
 	struct kgdb_nmi_tty_priv *priv = tty->driver_data;
+	unsigned int mode = file->f_flags & O_ACCMODE;
+	int ret;
 
-	return tty_port_open(&priv->port, tty, file);
+	ret = tty_port_open(&priv->port, tty, file);
+	if (!ret && (mode == O_RDONLY || mode == O_RDWR))
+		atomic_inc(&kgdb_nmi_num_readers);
+
+	return ret;
 }
 
 static void kgdb_nmi_tty_close(struct tty_struct *tty, struct file *file)
 {
 	struct kgdb_nmi_tty_priv *priv = tty->driver_data;
+	unsigned int mode = file->f_flags & O_ACCMODE;
+
+	if (mode == O_RDONLY || mode == O_RDWR)
+		atomic_dec(&kgdb_nmi_num_readers);
 
 	tty_port_close(&priv->port, tty, file);
 }
@@ -313,12 +323,6 @@ static const struct tty_operations kgdb_nmi_tty_ops = {
 	.write		= kgdb_nmi_tty_write,
 };
 
-static int kgdb_nmi_enable_console(int argc, const char *argv[])
-{
-	kgdb_nmi_tty_enabled = !(argc == 1 && !strcmp(argv[1], "off"));
-	return 0;
-}
-
 int kgdb_register_nmi_console(void)
 {
 	int ret;
@@ -348,19 +352,9 @@ int kgdb_register_nmi_console(void)
 		goto err_drv_reg;
 	}
 
-	ret = kdb_register("nmi_console", kgdb_nmi_enable_console, "[off]",
-			   "switch to Linux NMI console", 0);
-	if (ret) {
-		pr_err("%s: can't register kdb command: %d\n", __func__, ret);
-		goto err_kdb_reg;
-	}
-
 	register_console(&kgdb_nmi_console);
-	arch_kgdb_ops.enable_nmi(1);
 
 	return 0;
-err_kdb_reg:
-	tty_unregister_driver(kgdb_nmi_tty_driver);
 err_drv_reg:
 	put_tty_driver(kgdb_nmi_tty_driver);
 	return ret;
@@ -374,8 +368,6 @@ int kgdb_unregister_nmi_console(void)
 	if (!arch_kgdb_ops.enable_nmi)
 		return 0;
 	arch_kgdb_ops.enable_nmi(0);
-
-	kdb_unregister("nmi_console");
 
 	ret = unregister_console(&kgdb_nmi_console);
 	if (ret)

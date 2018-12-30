@@ -10,10 +10,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #ifndef VPIF_CAPTURE_H
@@ -52,7 +48,7 @@ struct video_obj {
 };
 
 struct vpif_cap_buffer {
-	struct vb2_buffer vb;
+	struct vb2_v4l2_buffer vb;
 	struct list_head list;
 };
 
@@ -65,11 +61,9 @@ struct common_obj {
 	struct v4l2_format fmt;
 	/* Buffer queue used in video-buf */
 	struct vb2_queue buffer_queue;
-	/* allocator-specific contexts for each plane */
-	struct vb2_alloc_ctx *alloc_ctx;
 	/* Queue of filled frames */
 	struct list_head dma_queue;
-	/* Used in video-buf */
+	/* Protects the dma_queue field */
 	spinlock_t irqlock;
 	/* lock used to access this structure */
 	struct mutex lock;
@@ -92,7 +86,7 @@ struct common_obj {
 
 struct channel_obj {
 	/* Identifies video device for this channel */
-	struct video_device *video_dev;
+	struct video_device video_dev;
 	/* Indicates id of the field which is being displayed */
 	u32 field_id;
 	/* flag to indicate whether decoder is initialized */
@@ -117,17 +111,6 @@ struct vpif_device {
 	struct v4l2_subdev **sd;
 	struct v4l2_async_notifier notifier;
 	struct vpif_capture_config *config;
-};
-
-struct vpif_config_params {
-	u8 min_numbuffers;
-	u8 numbuffers[VPIF_CAPTURE_NUM_CHANNELS];
-	s8 device_type;
-	u32 min_bufsize[VPIF_CAPTURE_NUM_CHANNELS];
-	u32 channel_bufsize[VPIF_CAPTURE_NUM_CHANNELS];
-	u8 default_device[VPIF_CAPTURE_NUM_CHANNELS];
-	u32 video_limit[VPIF_CAPTURE_NUM_CHANNELS];
-	u8 max_device_type;
 };
 
 #endif				/* VPIF_CAPTURE_H */

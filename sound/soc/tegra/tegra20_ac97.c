@@ -228,7 +228,7 @@ static int tegra20_ac97_probe(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver tegra20_ac97_dai = {
 	.name = "tegra-ac97-pcm",
-	.ac97_control = 1,
+	.bus_control = true,
 	.probe = tegra20_ac97_probe,
 	.playback = {
 		.stream_name = "PCM Playback",
@@ -318,7 +318,6 @@ static int tegra20_ac97_platform_probe(struct platform_device *pdev)
 	ac97 = devm_kzalloc(&pdev->dev, sizeof(struct tegra20_ac97),
 			    GFP_KERNEL);
 	if (!ac97) {
-		dev_err(&pdev->dev, "Can't allocate tegra20_ac97\n");
 		ret = -ENOMEM;
 		goto err;
 	}
@@ -378,7 +377,7 @@ static int tegra20_ac97_platform_probe(struct platform_device *pdev)
 	ret = clk_prepare_enable(ac97->clk_ac97);
 	if (ret) {
 		dev_err(&pdev->dev, "clk_enable failed: %d\n", ret);
-		goto err;
+		goto err_clk_put;
 	}
 
 	ret = snd_soc_set_ac97_ops(&tegra20_ac97_ops);
@@ -438,7 +437,6 @@ static const struct of_device_id tegra20_ac97_of_match[] = {
 static struct platform_driver tegra20_ac97_driver = {
 	.driver = {
 		.name = DRV_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = tegra20_ac97_of_match,
 	},
 	.probe = tegra20_ac97_platform_probe,

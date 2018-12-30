@@ -181,7 +181,7 @@ static long advwdt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (advwdt_set_heartbeat(new_timeout))
 			return -EINVAL;
 		advwdt_ping();
-		/* Fall */
+		/* fall through */
 	case WDIOC_GETTIMEOUT:
 		return put_user(timeout, p);
 	default:
@@ -302,7 +302,6 @@ static struct platform_driver advwdt_driver = {
 	.remove		= advwdt_remove,
 	.shutdown	= advwdt_shutdown,
 	.driver		= {
-		.owner	= THIS_MODULE,
 		.name	= DRV_NAME,
 	},
 };

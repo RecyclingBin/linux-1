@@ -99,7 +99,7 @@
 #define SPI_TX_TRIG_MASK		(0x3 << 16)
 #define SPI_TX_TRIG_1W			(0x0 << 16)
 #define SPI_TX_TRIG_4W			(0x1 << 16)
-#define SPI_DMA_BLK_COUNT(count)	(((count) - 1) & 0xFFFF);
+#define SPI_DMA_BLK_COUNT(count)	(((count) - 1) & 0xFFFF)
 
 #define SPI_TX_FIFO			0x10
 #define SPI_RX_FIFO			0x20
@@ -221,6 +221,7 @@ static int tegra_sflash_read_rx_fifo_to_client_rxbuf(
 	while (!(status & SPI_RXF_EMPTY)) {
 		int i;
 		u32 x = tegra_sflash_readl(tsd, SPI_RX_FIFO);
+
 		for (i = 0; (i < tsd->bytes_per_word); i++)
 			*rx_buf++ = (x >> (i*8)) & 0xFF;
 		read_words++;
@@ -340,7 +341,7 @@ static int tegra_sflash_transfer_one_message(struct spi_master *master,
 						SPI_DMA_TIMEOUT);
 		if (WARN_ON(ret == 0)) {
 			dev_err(tsd->dev,
-				"spi trasfer timeout, err %d\n", ret);
+				"spi transfer timeout, err %d\n", ret);
 			ret = -EIO;
 			goto exit;
 		}
@@ -484,7 +485,7 @@ static int tegra_sflash_probe(struct platform_device *pdev)
 		goto exit_free_irq;
 	}
 
-	tsd->rst = devm_reset_control_get(&pdev->dev, "spi");
+	tsd->rst = devm_reset_control_get_exclusive(&pdev->dev, "spi");
 	if (IS_ERR(tsd->rst)) {
 		dev_err(&pdev->dev, "can not get reset\n");
 		ret = PTR_ERR(tsd->rst);
@@ -607,7 +608,6 @@ static const struct dev_pm_ops slink_pm_ops = {
 static struct platform_driver tegra_sflash_driver = {
 	.driver = {
 		.name		= "spi-tegra-sflash",
-		.owner		= THIS_MODULE,
 		.pm		= &slink_pm_ops,
 		.of_match_table	= tegra_sflash_of_match,
 	},

@@ -15,10 +15,10 @@
 
 #include <linux/module.h>
 #include <linux/i2c.h>
-#include <linux/i2c/mcs.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/irq.h>
+#include <linux/platform_data/mcs.h>
 #include <linux/slab.h>
 
 /* Registers */
@@ -221,7 +221,6 @@ static int mcs5000_ts_probe(struct i2c_client *client,
 	input_set_abs_params(input_dev, ABS_X, 0, MCS5000_MAX_XC, 0, 0);
 	input_set_abs_params(input_dev, ABS_Y, 0, MCS5000_MAX_YC, 0, 0);
 
-	input_set_drvdata(input_dev, data);
 	data->input_dev = input_dev;
 
 	if (pdata->cfg_pin)
@@ -248,8 +247,7 @@ static int mcs5000_ts_probe(struct i2c_client *client,
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int mcs5000_ts_suspend(struct device *dev)
+static int __maybe_unused mcs5000_ts_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 
@@ -259,7 +257,7 @@ static int mcs5000_ts_suspend(struct device *dev)
 	return 0;
 }
 
-static int mcs5000_ts_resume(struct device *dev)
+static int __maybe_unused mcs5000_ts_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct mcs5000_ts_data *data = i2c_get_clientdata(client);
@@ -269,7 +267,6 @@ static int mcs5000_ts_resume(struct device *dev)
 
 	return 0;
 }
-#endif
 
 static SIMPLE_DEV_PM_OPS(mcs5000_ts_pm, mcs5000_ts_suspend, mcs5000_ts_resume);
 

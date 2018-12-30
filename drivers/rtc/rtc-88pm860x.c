@@ -135,9 +135,9 @@ static int pm860x_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	unsigned char buf[4];
 	unsigned long ticks, base, data;
 
-	if ((tm->tm_year < 70) || (tm->tm_year > 138)) {
+	if (tm->tm_year > 206) {
 		dev_dbg(info->dev, "Set time %d out of range. "
-			"Please set time between 1970 to 2038.\n",
+			"Please set time between 1970 to 2106.\n",
 			1900 + tm->tm_year);
 		return -EINVAL;
 	}
@@ -448,7 +448,6 @@ static SIMPLE_DEV_PM_OPS(pm860x_rtc_pm_ops, pm860x_rtc_suspend, pm860x_rtc_resum
 static struct platform_driver pm860x_rtc_driver = {
 	.driver		= {
 		.name	= "88pm860x-rtc",
-		.owner	= THIS_MODULE,
 		.pm	= &pm860x_rtc_pm_ops,
 	},
 	.probe		= pm860x_rtc_probe,

@@ -1,14 +1,9 @@
-/* linux/arch/arm/mach-s3c2410/s3c2410.c
- *
- * Copyright (c) 2003-2005 Simtec Electronics
- *	Ben Dooks <ben@simtec.co.uk>
- *
- * http://www.simtec.co.uk/products/EB2410ITX/
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2003-2005 Simtec Electronics
+//	Ben Dooks <ben@simtec.co.uk>
+//
+// http://www.simtec.co.uk/products/EB2410ITX/
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -41,10 +36,7 @@
 
 #include <plat/cpu.h>
 #include <plat/devs.h>
-#include <plat/clock.h>
-#include <plat/pll.h>
 #include <plat/pm.h>
-#include <plat/watchdog-reset.h>
 
 #include <plat/gpio-core.h>
 #include <plat/gpio-cfg.h>
@@ -81,10 +73,6 @@ void __init s3c2410_map_io(void)
 	s3c24xx_gpiocfg_default.get_pull = s3c24xx_gpio_getpull_1up;
 
 	iotable_init(s3c2410_iodesc, ARRAY_SIZE(s3c2410_iodesc));
-}
-
-void __init_or_cpufreq s3c2410_setup_clocks(void)
-{
 }
 
 struct bus_type s3c2410_subsys = {
@@ -128,7 +116,7 @@ int __init s3c2410_init(void)
 {
 	printk("S3C2410: Initialising architecture\n");
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 	register_syscore_ops(&s3c2410_pm_syscore_ops);
 	register_syscore_ops(&s3c24xx_irq_syscore_ops);
 #endif
@@ -140,16 +128,4 @@ int __init s3c2410a_init(void)
 {
 	s3c2410_dev.bus = &s3c2410a_subsys;
 	return s3c2410_init();
-}
-
-void s3c2410_restart(enum reboot_mode mode, const char *cmd)
-{
-	if (mode == REBOOT_SOFT) {
-		soft_restart(0);
-	}
-
-	samsung_wdt_reset();
-
-	/* we'll take a jump through zero as a poor second */
-	soft_restart(0);
 }

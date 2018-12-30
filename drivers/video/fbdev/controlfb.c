@@ -48,9 +48,7 @@
 #include <linux/nvram.h>
 #include <linux/adb.h>
 #include <linux/cuda.h>
-#include <asm/io.h>
 #include <asm/prom.h>
-#include <asm/pgtable.h>
 #include <asm/btext.h>
 
 #include "macmodes.h"
@@ -218,7 +216,8 @@ static int controlfb_check_var (struct fb_var_screeninfo *var, struct fb_info *i
  */
 static int controlfb_set_par (struct fb_info *info)
 {
-	struct fb_info_control *p = (struct fb_info_control *) info;
+	struct fb_info_control *p =
+		container_of(info, struct fb_info_control, info);
 	struct fb_par_control par;
 	int err;
 
@@ -258,7 +257,8 @@ static int controlfb_pan_display(struct fb_var_screeninfo *var,
 				 struct fb_info *info)
 {
 	unsigned int xoffset, hstep;
-	struct fb_info_control *p = (struct fb_info_control *)info;
+	struct fb_info_control *p =
+		container_of(info, struct fb_info_control, info);
 	struct fb_par_control *par = &p->par;
 
 	/*
@@ -309,10 +309,11 @@ static int controlfb_mmap(struct fb_info *info,
 
 static int controlfb_blank(int blank_mode, struct fb_info *info)
 {
-	struct fb_info_control *p = (struct fb_info_control *) info;
+	struct fb_info_control *p =
+		container_of(info, struct fb_info_control, info);
 	unsigned ctrl;
 
-	ctrl = ld_le32(CNTRL_REG(p,ctrl));
+	ctrl = le32_to_cpup(CNTRL_REG(p,ctrl));
 	if (blank_mode > 0)
 		switch (blank_mode) {
 		case FB_BLANK_VSYNC_SUSPEND:
@@ -342,7 +343,8 @@ static int controlfb_blank(int blank_mode, struct fb_info *info)
 static int controlfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 			     u_int transp, struct fb_info *info)
 {
-	struct fb_info_control *p = (struct fb_info_control *) info;
+	struct fb_info_control *p =
+		container_of(info, struct fb_info_control, info);
 	__u8 r, g, b;
 
 	if (regno > 255)
@@ -711,8 +713,7 @@ static int __init control_of_init(struct device_node *dp)
 		goto error_out;
 	}
 	/* map at most 8MB for the frame buffer */
-	p->frame_buffer = __ioremap(p->frame_buffer_phys, 0x800000,
-				    _PAGE_WRITETHRU);
+	p->frame_buffer = ioremap_wt(p->frame_buffer_phys, 0x800000);
 
 	if (!p->control_regs_phys ||
 	    !request_mem_region(p->control_regs_phys, p->control_regs_size,
@@ -833,7 +834,8 @@ static int control_var_to_par(struct fb_var_screeninfo *var,
 	unsigned hperiod, hssync, hsblank, hesync, heblank, piped, heq, hlfln,
 		 hserr, vperiod, vssync, vesync, veblank, vsblank, vswin, vewin;
 	unsigned long pixclock;
-	struct fb_info_control *p = (struct fb_info_control *) fb_info;
+	struct fb_info_control *p =
+		container_of(fb_info, struct fb_info_control, info);
 	struct control_regvals *r = &par->regvals;
 
 	switch (var->bits_per_pixel) {

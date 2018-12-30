@@ -1,14 +1,9 @@
-/* linux/arch/arm/plat-s3c24xx/s3c244x.c
- *
- * Copyright (c) 2004-2006 Simtec Electronics
- *   Ben Dooks <ben@simtec.co.uk>
- *
- * Samsung S3C2440 and S3C2442 Mobile CPU support (not S3C2443)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2004-2006 Simtec Electronics
+//   Ben Dooks <ben@simtec.co.uk>
+//
+// Samsung S3C2440 and S3C2442 Mobile CPU support (not S3C2443)
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -38,15 +33,12 @@
 #include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
 
-#include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/pm.h>
-#include <plat/pll.h>
-#include <plat/nand-core.h>
-#include <plat/watchdog-reset.h>
 
 #include "common.h"
+#include "nand-core.h"
 #include "regs-dsc.h"
 
 static struct map_desc s3c244x_iodesc[] __initdata = {
@@ -76,10 +68,6 @@ void __init s3c244x_map_io(void)
 	s3c_device_ts.name = "s3c2440-ts";
 	s3c_device_usbgadget.name = "s3c2440-usbgadget";
 	s3c2410_device_dclk.name = "s3c2440-dclk";
-}
-
-void __init_or_cpufreq s3c244x_setup_clocks(void)
-{
 }
 
 /* Since the S3C2442 and S3C2440 share items, put both subsystems here */
@@ -115,7 +103,7 @@ static int __init s3c2442_core_init(void)
 core_initcall(s3c2442_core_init);
 
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static struct sleep_save s3c244x_sleep[] = {
 	SAVE_ITEM(S3C2440_DSC0),
 	SAVE_ITEM(S3C2440_DSC1),
@@ -134,23 +122,9 @@ static void s3c244x_resume(void)
 {
 	s3c_pm_do_restore(s3c244x_sleep, ARRAY_SIZE(s3c244x_sleep));
 }
-#else
-#define s3c244x_suspend NULL
-#define s3c244x_resume  NULL
-#endif
 
 struct syscore_ops s3c244x_pm_syscore_ops = {
 	.suspend	= s3c244x_suspend,
 	.resume		= s3c244x_resume,
 };
-
-void s3c244x_restart(enum reboot_mode mode, const char *cmd)
-{
-	if (mode == REBOOT_SOFT)
-		soft_restart(0);
-
-	samsung_wdt_reset();
-
-	/* we'll take a jump through zero as a poor second */
-	soft_restart(0);
-}
+#endif

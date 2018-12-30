@@ -1,15 +1,10 @@
-/*
- * Copyright (c) 2003-2008 Simtec Electronics
- *   Ben Dooks <ben@simtec.co.uk>
- *
- * Machine support for Thorcom VR1000 board. Designed for Thorcom by
- * Simtec Electronics, http://www.simtec.co.uk/
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2003-2008 Simtec Electronics
+//   Ben Dooks <ben@simtec.co.uk>
+//
+// Machine support for Thorcom VR1000 board. Designed for Thorcom by
+// Simtec Electronics, http://www.simtec.co.uk/
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -340,5 +335,4 @@ MACHINE_START(VR1000, "Thorcom-VR1000")
 	.init_machine	= vr1000_init,
 	.init_irq	= s3c2410_init_irq,
 	.init_time	= vr1000_init_time,
-	.restart	= s3c2410_restart,
 MACHINE_END

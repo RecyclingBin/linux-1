@@ -1,19 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * s2mps14.h
- *
  * Copyright (c) 2014 Samsung Electronics Co., Ltd
  *              http://www.samsung.com
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #ifndef __LINUX_MFD_S2MPS14_H
@@ -123,10 +111,6 @@ enum s2mps14_regulators {
 };
 
 /* Regulator constraints for BUCKx */
-#define S2MPS14_BUCK1235_MIN_600MV	600000
-#define S2MPS14_BUCK4_MIN_1400MV	1400000
-#define S2MPS14_BUCK1235_STEP_6_25MV	6250
-#define S2MPS14_BUCK4_STEP_12_5MV	12500
 #define S2MPS14_BUCK1235_START_SEL	0x20
 #define S2MPS14_BUCK4_START_SEL		0x40
 /*
@@ -135,12 +119,6 @@ enum s2mps14_regulators {
  * Let's assume that default value will be set.
  */
 #define S2MPS14_BUCK_RAMP_DELAY		12500
-
-/* Regulator constraints for different types of LDOx */
-#define S2MPS14_LDO_MIN_800MV		800000
-#define S2MPS14_LDO_MIN_1800MV		1800000
-#define S2MPS14_LDO_STEP_12_5MV		12500
-#define S2MPS14_LDO_STEP_25MV		25000
 
 #define S2MPS14_LDO_VSEL_MASK		0x3F
 #define S2MPS14_BUCK_VSEL_MASK		0xFF

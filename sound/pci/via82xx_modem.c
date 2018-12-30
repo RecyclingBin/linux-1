@@ -31,7 +31,7 @@
  *      modems.
  */
 
-#include <asm/io.h>
+#include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
@@ -260,7 +260,7 @@ struct via82xx_modem {
 	struct snd_info_entry *proc_entry;
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_via82xx_modem_ids) = {
+static const struct pci_device_id snd_via82xx_modem_ids[] = {
 	{ PCI_VDEVICE(VIA, 0x3068), TYPE_CARD_VIA82XX_MODEM, },
 	{ 0, }
 };
@@ -292,7 +292,9 @@ static int build_via_table(struct viadev *dev, struct snd_pcm_substream *substre
 			return -ENOMEM;
 	}
 	if (! dev->idx_table) {
-		dev->idx_table = kmalloc(sizeof(*dev->idx_table) * VIA_TABLE_SIZE, GFP_KERNEL);
+		dev->idx_table = kmalloc_array(VIA_TABLE_SIZE,
+					       sizeof(*dev->idx_table),
+					       GFP_KERNEL);
 		if (! dev->idx_table)
 			return -ENOMEM;
 	}
@@ -714,7 +716,7 @@ static int snd_via82xx_pcm_prepare(struct snd_pcm_substream *substream)
 /*
  * pcm hardware definition, identical for both playback and capture
  */
-static struct snd_pcm_hardware snd_via82xx_hw =
+static const struct snd_pcm_hardware snd_via82xx_hw =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -744,8 +746,8 @@ static int snd_via82xx_modem_pcm_open(struct via82xx_modem *chip, struct viadev 
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	int err;
-        static unsigned int rates[] = { 8000,  9600, 12000, 16000 };
-        static struct snd_pcm_hw_constraint_list hw_constraints_rates = {
+	static const unsigned int rates[] = { 8000,  9600, 12000, 16000 };
+	static const struct snd_pcm_hw_constraint_list hw_constraints_rates = {
                 .count = ARRAY_SIZE(rates),
                 .list = rates,
                 .mask = 0,
@@ -804,7 +806,7 @@ static int snd_via82xx_pcm_close(struct snd_pcm_substream *substream)
 
 
 /* via686 playback callbacks */
-static struct snd_pcm_ops snd_via686_playback_ops = {
+static const struct snd_pcm_ops snd_via686_playback_ops = {
 	.open =		snd_via82xx_playback_open,
 	.close =	snd_via82xx_pcm_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -817,7 +819,7 @@ static struct snd_pcm_ops snd_via686_playback_ops = {
 };
 
 /* via686 capture callbacks */
-static struct snd_pcm_ops snd_via686_capture_ops = {
+static const struct snd_pcm_ops snd_via686_capture_ops = {
 	.open =		snd_via82xx_capture_open,
 	.close =	snd_via82xx_pcm_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -1031,7 +1033,6 @@ static int snd_via82xx_chip_init(struct via82xx_modem *chip)
  */
 static int snd_via82xx_suspend(struct device *dev)
 {
-	struct pci_dev *pci = to_pci_dev(dev);
 	struct snd_card *card = dev_get_drvdata(dev);
 	struct via82xx_modem *chip = card->private_data;
 	int i;
@@ -1043,28 +1044,14 @@ static int snd_via82xx_suspend(struct device *dev)
 		snd_via82xx_channel_reset(chip, &chip->devs[i]);
 	synchronize_irq(chip->irq);
 	snd_ac97_suspend(chip->ac97);
-
-	pci_disable_device(pci);
-	pci_save_state(pci);
-	pci_set_power_state(pci, PCI_D3hot);
 	return 0;
 }
 
 static int snd_via82xx_resume(struct device *dev)
 {
-	struct pci_dev *pci = to_pci_dev(dev);
 	struct snd_card *card = dev_get_drvdata(dev);
 	struct via82xx_modem *chip = card->private_data;
 	int i;
-
-	pci_set_power_state(pci, PCI_D0);
-	pci_restore_state(pci);
-	if (pci_enable_device(pci) < 0) {
-		dev_err(dev, "pci_enable_device failed, disabling device\n");
-		snd_card_disconnect(card);
-		return -EIO;
-	}
-	pci_set_master(pci);
 
 	snd_via82xx_chip_init(chip);
 

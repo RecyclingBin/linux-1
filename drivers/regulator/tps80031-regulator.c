@@ -691,8 +691,8 @@ static int tps80031_regulator_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	pmic = devm_kzalloc(&pdev->dev,
-			TPS80031_REGULATOR_MAX * sizeof(*pmic), GFP_KERNEL);
+	pmic = devm_kcalloc(&pdev->dev,
+			TPS80031_REGULATOR_MAX, sizeof(*pmic), GFP_KERNEL);
 	if (!pmic)
 		return -ENOMEM;
 
@@ -746,7 +746,6 @@ static int tps80031_regulator_probe(struct platform_device *pdev)
 static struct platform_driver tps80031_regulator_driver = {
 	.driver	= {
 		.name	= "tps80031-pmic",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= tps80031_regulator_probe,
 };

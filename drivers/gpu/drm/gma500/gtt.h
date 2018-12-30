@@ -21,6 +21,7 @@
 #define _PSB_GTT_H_
 
 #include <drm/drmP.h>
+#include <drm/drm_gem.h>
 
 /* This wants cleaning up with respect to the psb_dev and un-needed stuff */
 struct psb_gtt {
@@ -51,6 +52,8 @@ struct gtt_range {
 	int npage;			/* Number of backing pages */
 	int roll;			/* Roll applied to the GTT entries */
 };
+
+#define to_gtt_range(x) container_of(x, struct gtt_range, gem)
 
 extern struct gtt_range *psb_gtt_alloc_range(struct drm_device *dev, int len,
 					     const char *name, int backed,

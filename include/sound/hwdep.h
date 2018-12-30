@@ -37,7 +37,7 @@ struct snd_hwdep_ops {
 		      long count, loff_t *offset);
 	int (*open)(struct snd_hwdep *hw, struct file * file);
 	int (*release)(struct snd_hwdep *hw, struct file * file);
-	unsigned int (*poll)(struct snd_hwdep *hw, struct file *file,
+	__poll_t (*poll)(struct snd_hwdep *hw, struct file *file,
 			     poll_table *wait);
 	int (*ioctl)(struct snd_hwdep *hw, struct file *file,
 		     unsigned int cmd, unsigned long arg);
@@ -68,8 +68,7 @@ struct snd_hwdep {
 	wait_queue_head_t open_wait;
 	void *private_data;
 	void (*private_free) (struct snd_hwdep *hwdep);
-	struct device *dev;
-	const struct attribute_group **groups;
+	struct device dev;
 
 	struct mutex open_mutex;
 	int used;			/* reference counter */

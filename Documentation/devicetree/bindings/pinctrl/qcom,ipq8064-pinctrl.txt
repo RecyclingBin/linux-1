@@ -10,6 +10,11 @@ Required properties:
 - #gpio-cells : Should be two.
                 The first cell is the gpio pin number and the
                 second cell is used for optional parameters.
+- gpio-ranges: see ../gpio/gpio.txt
+
+Optional properties:
+
+- gpio-reserved-ranges: see ../gpio/gpio.txt
 
 Please refer to ../gpio/gpio.txt and ../interrupt-controller/interrupts.txt for
 a general description of GPIO and interrupt bindings.
@@ -18,7 +23,7 @@ Please refer to pinctrl-bindings.txt in this directory for details of the
 common pinctrl bindings used by client devices, including the meaning of the
 phrase "pin configuration node".
 
-Qualcomm's pin configuration nodes act as a container for an abitrary number of
+Qualcomm's pin configuration nodes act as a container for an arbitrary number of
 subnodes. Each of these subnodes represents some desired configuration for a
 pin, a group, or a list of pins or groups. This configuration can include the
 mux function to select on those pin(s)/group(s), and various pin configuration
@@ -51,7 +56,7 @@ Valid values for qcom,pins are:
 
 
 Valid values for function are:
-  mdio, mi2s, pdm, ssbi, spmi, audio_pcm, gsbi1, gsbi2, gsbi4, gsbi5,
+  mdio, mi2s, pdm, ssbi, spmi, audio_pcm, gpio, gsbi1, gsbi2, gsbi4, gsbi5,
   gsbi5_spi_cs1, gsbi5_spi_cs2, gsbi5_spi_cs3, gsbi6, gsbi7, nss_spi, sdc1,
   spdif, nand, tsif1, tsif2, usb_fs_n, usb_fs, usb2_hsic, rgmii2, sata,
   pcie1_rst, pcie1_prsnt, pcie1_pwren_n, pcie1_pwren, pcie1_pwrflt,
@@ -67,6 +72,7 @@ Example:
 
 		gpio-controller;
 		#gpio-cells = <2>;
+		gpio-ranges = <&pinmux 0 0 69>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
 		interrupts = <0 32 0x4>;

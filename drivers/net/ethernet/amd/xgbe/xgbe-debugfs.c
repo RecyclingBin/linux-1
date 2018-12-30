@@ -121,7 +121,6 @@
 #include "xgbe.h"
 #include "xgbe-common.h"
 
-
 static ssize_t xgbe_common_read(char __user *buffer, size_t count,
 				loff_t *ppos, unsigned int value)
 {
@@ -151,10 +150,10 @@ static ssize_t xgbe_common_write(const char __user *buffer, size_t count,
 {
 	char workarea[32];
 	ssize_t len;
-	unsigned int scan_value;
+	int ret;
 
 	if (*ppos != 0)
-		return 0;
+		return -EINVAL;
 
 	if (count >= sizeof(workarea))
 		return -ENOSPC;
@@ -165,9 +164,8 @@ static ssize_t xgbe_common_write(const char __user *buffer, size_t count,
 		return len;
 
 	workarea[len] = '\0';
-	if (sscanf(workarea, "%x", &scan_value) == 1)
-		*value = scan_value;
-	else
+	ret = kstrtouint(workarea, 16, value);
+	if (ret)
 		return -EIO;
 
 	return len;
@@ -273,8 +271,8 @@ static ssize_t xpcs_reg_value_read(struct file *filp, char __user *buffer,
 	struct xgbe_prv_data *pdata = filp->private_data;
 	unsigned int value;
 
-	value = pdata->hw_if.read_mmd_regs(pdata, pdata->debugfs_xpcs_mmd,
-					   pdata->debugfs_xpcs_reg);
+	value = XMDIO_READ(pdata, pdata->debugfs_xpcs_mmd,
+			   pdata->debugfs_xpcs_reg);
 
 	return xgbe_common_read(buffer, count, ppos, value);
 }
@@ -291,8 +289,8 @@ static ssize_t xpcs_reg_value_write(struct file *filp,
 	if (len < 0)
 		return len;
 
-	pdata->hw_if.write_mmd_regs(pdata, pdata->debugfs_xpcs_mmd,
-				    pdata->debugfs_xpcs_reg, value);
+	XMDIO_WRITE(pdata, pdata->debugfs_xpcs_mmd, pdata->debugfs_xpcs_reg,
+		    value);
 
 	return len;
 }
@@ -318,6 +316,126 @@ static const struct file_operations xpcs_reg_value_fops = {
 	.write = xpcs_reg_value_write,
 };
 
+static ssize_t xprop_reg_addr_read(struct file *filp, char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_read(buffer, count, ppos, pdata->debugfs_xprop_reg);
+}
+
+static ssize_t xprop_reg_addr_write(struct file *filp,
+				    const char __user *buffer,
+				    size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_write(buffer, count, ppos,
+				 &pdata->debugfs_xprop_reg);
+}
+
+static ssize_t xprop_reg_value_read(struct file *filp, char __user *buffer,
+				    size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+
+	value = XP_IOREAD(pdata, pdata->debugfs_xprop_reg);
+
+	return xgbe_common_read(buffer, count, ppos, value);
+}
+
+static ssize_t xprop_reg_value_write(struct file *filp,
+				     const char __user *buffer,
+				     size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+	ssize_t len;
+
+	len = xgbe_common_write(buffer, count, ppos, &value);
+	if (len < 0)
+		return len;
+
+	XP_IOWRITE(pdata, pdata->debugfs_xprop_reg, value);
+
+	return len;
+}
+
+static const struct file_operations xprop_reg_addr_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xprop_reg_addr_read,
+	.write = xprop_reg_addr_write,
+};
+
+static const struct file_operations xprop_reg_value_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xprop_reg_value_read,
+	.write = xprop_reg_value_write,
+};
+
+static ssize_t xi2c_reg_addr_read(struct file *filp, char __user *buffer,
+				  size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_read(buffer, count, ppos, pdata->debugfs_xi2c_reg);
+}
+
+static ssize_t xi2c_reg_addr_write(struct file *filp,
+				   const char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_write(buffer, count, ppos,
+				 &pdata->debugfs_xi2c_reg);
+}
+
+static ssize_t xi2c_reg_value_read(struct file *filp, char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+
+	value = XI2C_IOREAD(pdata, pdata->debugfs_xi2c_reg);
+
+	return xgbe_common_read(buffer, count, ppos, value);
+}
+
+static ssize_t xi2c_reg_value_write(struct file *filp,
+				    const char __user *buffer,
+				    size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+	ssize_t len;
+
+	len = xgbe_common_write(buffer, count, ppos, &value);
+	if (len < 0)
+		return len;
+
+	XI2C_IOWRITE(pdata, pdata->debugfs_xi2c_reg, value);
+
+	return len;
+}
+
+static const struct file_operations xi2c_reg_addr_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xi2c_reg_addr_read,
+	.write = xi2c_reg_addr_write,
+};
+
+static const struct file_operations xi2c_reg_value_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xi2c_reg_value_read,
+	.write = xi2c_reg_value_write,
+};
+
 void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
 {
 	struct dentry *pfile;
@@ -329,9 +447,13 @@ void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
 	pdata->debugfs_xpcs_reg = 0;
 
 	buf = kasprintf(GFP_KERNEL, "amd-xgbe-%s", pdata->netdev->name);
+	if (!buf)
+		return;
+
 	pdata->xgbe_debugfs = debugfs_create_dir(buf, NULL);
-	if (pdata->xgbe_debugfs == NULL) {
+	if (!pdata->xgbe_debugfs) {
 		netdev_err(pdata->netdev, "debugfs_create_dir failed\n");
+		kfree(buf);
 		return;
 	}
 
@@ -365,6 +487,54 @@ void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
 	if (!pfile)
 		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
 
+	if (pdata->xprop_regs) {
+		pfile = debugfs_create_file("xprop_register", 0600,
+					    pdata->xgbe_debugfs, pdata,
+					    &xprop_reg_addr_fops);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_file failed\n");
+
+		pfile = debugfs_create_file("xprop_register_value", 0600,
+					    pdata->xgbe_debugfs, pdata,
+					    &xprop_reg_value_fops);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_file failed\n");
+	}
+
+	if (pdata->xi2c_regs) {
+		pfile = debugfs_create_file("xi2c_register", 0600,
+					    pdata->xgbe_debugfs, pdata,
+					    &xi2c_reg_addr_fops);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_file failed\n");
+
+		pfile = debugfs_create_file("xi2c_register_value", 0600,
+					    pdata->xgbe_debugfs, pdata,
+					    &xi2c_reg_value_fops);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_file failed\n");
+	}
+
+	if (pdata->vdata->an_cdr_workaround) {
+		pfile = debugfs_create_bool("an_cdr_workaround", 0600,
+					    pdata->xgbe_debugfs,
+					    &pdata->debugfs_an_cdr_workaround);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_bool failed\n");
+
+		pfile = debugfs_create_bool("an_cdr_track_early", 0600,
+					    pdata->xgbe_debugfs,
+					    &pdata->debugfs_an_cdr_track_early);
+		if (!pfile)
+			netdev_err(pdata->netdev,
+				   "debugfs_create_bool failed\n");
+	}
+
 	kfree(buf);
 }
 
@@ -372,4 +542,29 @@ void xgbe_debugfs_exit(struct xgbe_prv_data *pdata)
 {
 	debugfs_remove_recursive(pdata->xgbe_debugfs);
 	pdata->xgbe_debugfs = NULL;
+}
+
+void xgbe_debugfs_rename(struct xgbe_prv_data *pdata)
+{
+	struct dentry *pfile;
+	char *buf;
+
+	if (!pdata->xgbe_debugfs)
+		return;
+
+	buf = kasprintf(GFP_KERNEL, "amd-xgbe-%s", pdata->netdev->name);
+	if (!buf)
+		return;
+
+	if (!strcmp(pdata->xgbe_debugfs->d_name.name, buf))
+		goto out;
+
+	pfile = debugfs_rename(pdata->xgbe_debugfs->d_parent,
+			       pdata->xgbe_debugfs,
+			       pdata->xgbe_debugfs->d_parent, buf);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_rename failed\n");
+
+out:
+	kfree(buf);
 }

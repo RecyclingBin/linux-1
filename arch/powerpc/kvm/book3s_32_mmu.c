@@ -23,7 +23,6 @@
 #include <linux/kvm_host.h>
 #include <linux/highmem.h>
 
-#include <asm/tlbflush.h>
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
 
@@ -52,7 +51,7 @@
 static inline bool check_debug_ip(struct kvm_vcpu *vcpu)
 {
 #ifdef DEBUG_MMU_PTE_IP
-	return vcpu->arch.pc == DEBUG_MMU_PTE_IP;
+	return vcpu->arch.regs.nip == DEBUG_MMU_PTE_IP;
 #else
 	return true;
 #endif
@@ -76,11 +75,6 @@ static inline bool sr_ks(u32 sr_raw)
 static inline bool sr_kp(u32 sr_raw)
 {
 	return (sr_raw & 0x20000000) ? true: false;
-}
-
-static inline bool sr_nx(u32 sr_raw)
-{
-	return (sr_raw & 0x10000000) ? true: false;
 }
 
 static int kvmppc_mmu_book3s_32_xlate_bat(struct kvm_vcpu *vcpu, gva_t eaddr,
@@ -229,7 +223,8 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
 	ptem = kvmppc_mmu_book3s_32_get_ptem(sre, eaddr, primary);
 
 	if(copy_from_user(pteg, (void __user *)ptegp, sizeof(pteg))) {
-		printk(KERN_ERR "KVM: Can't copy data from 0x%lx!\n", ptegp);
+		printk_ratelimited(KERN_ERR
+			"KVM: Can't copy data from 0x%lx!\n", ptegp);
 		goto no_page_found;
 	}
 
@@ -335,7 +330,7 @@ static int kvmppc_mmu_book3s_32_xlate(struct kvm_vcpu *vcpu, gva_t eaddr,
 	if (r < 0)
 		r = kvmppc_mmu_book3s_32_xlate_pte(vcpu, eaddr, pte,
 						   data, iswrite, true);
-	if (r < 0)
+	if (r == -ENOENT)
 		r = kvmppc_mmu_book3s_32_xlate_pte(vcpu, eaddr, pte,
 						   data, iswrite, false);
 

@@ -254,7 +254,6 @@ static void lm3639_torch_brightness_set(struct led_classdev *cdev,
 	return;
 out:
 	dev_err(pchip->dev, "i2c failed to access register\n");
-	return;
 }
 
 /* flash */
@@ -293,7 +292,6 @@ static void lm3639_flash_brightness_set(struct led_classdev *cdev,
 	return;
 out:
 	dev_err(pchip->dev, "i2c failed to access register\n");
-	return;
 }
 
 static const struct regmap_config lm3639_regmap = {
@@ -402,10 +400,8 @@ static int lm3639_remove(struct i2c_client *client)
 
 	regmap_write(pchip->regmap, REG_ENABLE, 0x00);
 
-	if (&pchip->cdev_torch)
-		led_classdev_unregister(&pchip->cdev_torch);
-	if (&pchip->cdev_flash)
-		led_classdev_unregister(&pchip->cdev_flash);
+	led_classdev_unregister(&pchip->cdev_torch);
+	led_classdev_unregister(&pchip->cdev_flash);
 	if (pchip->bled)
 		device_remove_file(&(pchip->bled->dev), &dev_attr_bled_mode);
 	return 0;

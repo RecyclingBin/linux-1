@@ -807,7 +807,6 @@ struct scsi_host_template aic7xxx_driver_template = {
 	.this_id		= -1,
 	.max_sectors		= 8192,
 	.cmd_per_lun		= 2,
-	.use_clustering		= ENABLE_CLUSTERING,
 	.slave_alloc		= ahc_linux_slave_alloc,
 	.slave_configure	= ahc_linux_slave_configure,
 	.target_alloc		= ahc_linux_target_alloc,
@@ -1141,7 +1140,7 @@ ahc_linux_register_host(struct ahc_softc *ahc, struct scsi_host_template *templa
  * or forcing transfer negotiations on the next command to any
  * target.
  */
-void
+static void
 ahc_linux_initialize_scsi_bus(struct ahc_softc *ahc)
 {
 	int i;
@@ -1213,10 +1212,9 @@ ahc_platform_alloc(struct ahc_softc *ahc, void *platform_arg)
 {
 
 	ahc->platform_data =
-	    kmalloc(sizeof(struct ahc_platform_data), GFP_ATOMIC);
+	    kzalloc(sizeof(struct ahc_platform_data), GFP_ATOMIC);
 	if (ahc->platform_data == NULL)
 		return (ENOMEM);
-	memset(ahc->platform_data, 0, sizeof(struct ahc_platform_data));
 	ahc->platform_data->irq = AHC_LINUX_NOIRQ;
 	ahc_lockinit(ahc);
 	ahc->seltime = (aic7xxx_seltime & 0x3) << 4;
@@ -1334,12 +1332,9 @@ ahc_platform_set_tags(struct ahc_softc *ahc, struct scsi_device *sdev,
 	}
 	switch ((dev->flags & (AHC_DEV_Q_BASIC|AHC_DEV_Q_TAGGED))) {
 	case AHC_DEV_Q_BASIC:
-		scsi_set_tag_type(sdev, MSG_SIMPLE_TAG);
-		scsi_activate_tcq(sdev, dev->openings + dev->active);
-		break;
 	case AHC_DEV_Q_TAGGED:
-		scsi_set_tag_type(sdev, MSG_ORDERED_TAG);
-		scsi_activate_tcq(sdev, dev->openings + dev->active);
+		scsi_change_queue_depth(sdev,
+				dev->openings + dev->active);
 		break;
 	default:
 		/*
@@ -1348,7 +1343,7 @@ ahc_platform_set_tags(struct ahc_softc *ahc, struct scsi_device *sdev,
 		 * serially on the controller/device.  This should
 		 * remove some latency.
 		 */
-		scsi_deactivate_tcq(sdev, 2);
+		scsi_change_queue_depth(sdev, 2);
 		break;
 	}
 }
@@ -1447,7 +1442,7 @@ ahc_linux_run_command(struct ahc_softc *ahc, struct ahc_linux_device *dev,
 	 * we are storing a full busy target *lun*
 	 * table in SCB space.
 	 */
-	if (!blk_rq_tagged(cmd->request)
+	if (!(cmd->flags & SCMD_TAGGED)
 	    && (ahc->features & AHC_SCB_BTT) == 0) {
 		int target_offset;
 
@@ -1501,15 +1496,7 @@ ahc_linux_run_command(struct ahc_softc *ahc, struct ahc_linux_device *dev,
 	}
 
 	if ((dev->flags & (AHC_DEV_Q_TAGGED|AHC_DEV_Q_BASIC)) != 0) {
-		int	msg_bytes;
-		uint8_t tag_msgs[2];
-		
-		msg_bytes = scsi_populate_tag_msg(cmd, tag_msgs);
-		if (msg_bytes && tag_msgs[0] != MSG_SIMPLE_TASK) {
-			hscb->control |= tag_msgs[0];
-			if (tag_msgs[0] == MSG_ORDERED_TASK)
-				dev->commands_since_idle_or_otag = 0;
-		} else if (dev->commands_since_idle_or_otag == AHC_OTAG_THRESH
+		if (dev->commands_since_idle_or_otag == AHC_OTAG_THRESH
 				&& (dev->flags & AHC_DEV_Q_TAGGED) != 0) {
 			hscb->control |= MSG_ORDERED_TASK;
 			dev->commands_since_idle_or_otag = 0;
@@ -2110,7 +2097,7 @@ ahc_linux_queue_recovery_cmd(struct scsi_cmnd *cmd, scb_flag flag)
 		 */
 		printk("%s:%d:%d:%d: Is not an active device\n",
 		       ahc_name(ahc), cmd->device->channel, cmd->device->id,
-		       cmd->device->lun);
+		       (u8)cmd->device->lun);
 		retval = SUCCESS;
 		goto no_cmd;
 	}
@@ -2118,11 +2105,11 @@ ahc_linux_queue_recovery_cmd(struct scsi_cmnd *cmd, scb_flag flag)
 	if ((dev->flags & (AHC_DEV_Q_BASIC|AHC_DEV_Q_TAGGED)) == 0
 	 && ahc_search_untagged_queues(ahc, cmd, cmd->device->id,
 				       cmd->device->channel + 'A',
-				       cmd->device->lun,
+				       (u8)cmd->device->lun,
 				       CAM_REQ_ABORTED, SEARCH_COMPLETE) != 0) {
 		printk("%s:%d:%d:%d: Command found on untagged queue\n",
 		       ahc_name(ahc), cmd->device->channel, cmd->device->id,
-		       cmd->device->lun);
+		       (u8)cmd->device->lun);
 		retval = SUCCESS;
 		goto done;
 	}
@@ -2188,13 +2175,14 @@ ahc_linux_queue_recovery_cmd(struct scsi_cmnd *cmd, scb_flag flag)
 				       SEARCH_COMPLETE) > 0) {
 			printk("%s:%d:%d:%d: Cmd aborted from QINFIFO\n",
 			       ahc_name(ahc), cmd->device->channel,
-					cmd->device->id, cmd->device->lun);
+			       cmd->device->id, (u8)cmd->device->lun);
 			retval = SUCCESS;
 			goto done;
 		}
 	} else if (ahc_search_qinfifo(ahc, cmd->device->id,
 				      cmd->device->channel + 'A',
-				      cmd->device->lun, pending_scb->hscb->tag,
+				      cmd->device->lun,
+				      pending_scb->hscb->tag,
 				      ROLE_INITIATOR, /*status*/0,
 				      SEARCH_COUNT) > 0) {
 		disconnected = FALSE;
@@ -2338,11 +2326,6 @@ done:
 	} else
 		ahc_unlock(ahc, &flags);
 	return (retval);
-}
-
-void
-ahc_platform_dump_card_state(struct ahc_softc *ahc)
-{
 }
 
 static void ahc_linux_set_width(struct scsi_target *starget, int width)

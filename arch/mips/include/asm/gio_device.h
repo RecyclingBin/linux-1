@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
 
@@ -25,8 +26,6 @@ struct gio_driver {
 
 	int  (*probe)(struct gio_device *, const struct gio_device_id *);
 	void (*remove)(struct gio_device *);
-	int  (*suspend)(struct gio_device *, pm_message_t);
-	int  (*resume)(struct gio_device *);
 	void (*shutdown)(struct gio_device *);
 
 	struct device_driver driver;

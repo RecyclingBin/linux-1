@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * linux/kernel/time/tick-broadcast-hrtimer.c
- * This file emulates a local clock event device
- * via a pseudo clock device.
+ * Emulate a local clock event device via a pseudo clock device.
  */
 #include <linux/cpu.h>
 #include <linux/err.h>
@@ -18,29 +17,23 @@
 
 static struct hrtimer bctimer;
 
-static void bc_set_mode(enum clock_event_mode mode,
-			struct clock_event_device *bc)
+static int bc_shutdown(struct clock_event_device *evt)
 {
-	switch (mode) {
-	case CLOCK_EVT_MODE_SHUTDOWN:
-		/*
-		 * Note, we cannot cancel the timer here as we might
-		 * run into the following live lock scenario:
-		 *
-		 * cpu 0		cpu1
-		 * lock(broadcast_lock);
-		 *			hrtimer_interrupt()
-		 *			bc_handler()
-		 *			   tick_handle_oneshot_broadcast();
-		 *			    lock(broadcast_lock);
-		 * hrtimer_cancel()
-		 *  wait_for_callback()
-		 */
-		hrtimer_try_to_cancel(&bctimer);
-		break;
-	default:
-		break;
-	}
+	/*
+	 * Note, we cannot cancel the timer here as we might
+	 * run into the following live lock scenario:
+	 *
+	 * cpu 0		cpu1
+	 * lock(broadcast_lock);
+	 *			hrtimer_interrupt()
+	 *			bc_handler()
+	 *			   tick_handle_oneshot_broadcast();
+	 *			    lock(broadcast_lock);
+	 * hrtimer_cancel()
+	 *  wait_for_callback()
+	 */
+	hrtimer_try_to_cancel(&bctimer);
+	return 0;
 }
 
 /*
@@ -49,6 +42,7 @@ static void bc_set_mode(enum clock_event_mode mode,
  */
 static int bc_set_next(ktime_t expires, struct clock_event_device *bc)
 {
+	int bc_moved;
 	/*
 	 * We try to cancel the timer first. If the callback is on
 	 * flight on some other cpu then we let it handle it. If we
@@ -60,9 +54,17 @@ static int bc_set_next(ktime_t expires, struct clock_event_device *bc)
 	 * restart the timer because we are in the callback, but we
 	 * can set the expiry time and let the callback return
 	 * HRTIMER_RESTART.
+	 *
+	 * Since we are in the idle loop at this point and because
+	 * hrtimer_{start/cancel} functions call into tracing,
+	 * calls to these functions must be bound within RCU_NONIDLE.
 	 */
-	if (hrtimer_try_to_cancel(&bctimer) >= 0) {
-		hrtimer_start(&bctimer, expires, HRTIMER_MODE_ABS_PINNED);
+	RCU_NONIDLE({
+			bc_moved = hrtimer_try_to_cancel(&bctimer) >= 0;
+			if (bc_moved)
+				hrtimer_start(&bctimer, expires,
+					      HRTIMER_MODE_ABS_PINNED);});
+	if (bc_moved) {
 		/* Bind the "device" to the cpu */
 		bc->bound_on = smp_processor_id();
 	} else if (bc->bound_on == smp_processor_id()) {
@@ -72,7 +74,8 @@ static int bc_set_next(ktime_t expires, struct clock_event_device *bc)
 }
 
 static struct clock_event_device ce_broadcast_hrtimer = {
-	.set_mode		= bc_set_mode,
+	.name			= "bc_hrtimer",
+	.set_state_shutdown	= bc_shutdown,
 	.set_next_ktime		= bc_set_next,
 	.features		= CLOCK_EVT_FEAT_ONESHOT |
 				  CLOCK_EVT_FEAT_KTIME |
@@ -85,17 +88,18 @@ static struct clock_event_device ce_broadcast_hrtimer = {
 	.max_delta_ticks	= ULONG_MAX,
 	.mult			= 1,
 	.shift			= 0,
-	.cpumask		= cpu_all_mask,
+	.cpumask		= cpu_possible_mask,
 };
 
 static enum hrtimer_restart bc_handler(struct hrtimer *t)
 {
 	ce_broadcast_hrtimer.event_handler(&ce_broadcast_hrtimer);
 
-	if (ce_broadcast_hrtimer.next_event.tv64 == KTIME_MAX)
-		return HRTIMER_NORESTART;
+	if (clockevent_state_oneshot(&ce_broadcast_hrtimer))
+		if (ce_broadcast_hrtimer.next_event != KTIME_MAX)
+			return HRTIMER_RESTART;
 
-	return HRTIMER_RESTART;
+	return HRTIMER_NORESTART;
 }
 
 void tick_setup_hrtimer_broadcast(void)

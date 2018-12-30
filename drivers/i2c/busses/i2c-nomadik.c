@@ -446,9 +446,9 @@ static void setup_i2c_controller(struct nmk_i2c_dev *dev)
  */
 static int read_i2c(struct nmk_i2c_dev *dev, u16 flags)
 {
-	u32 status = 0;
+	int status = 0;
 	u32 mcr, irq_mask;
-	int timeout;
+	unsigned long timeout;
 
 	mcr = load_i2c_mcr_reg(dev, flags);
 	writel(mcr, dev->virtbase + I2C_MCR);
@@ -517,7 +517,7 @@ static int write_i2c(struct nmk_i2c_dev *dev, u16 flags)
 {
 	u32 status = 0;
 	u32 mcr, irq_mask;
-	int timeout;
+	unsigned long timeout;
 
 	mcr = load_i2c_mcr_reg(dev, flags);
 
@@ -932,7 +932,7 @@ static int nmk_i2c_runtime_resume(struct device *dev)
 
 static const struct dev_pm_ops nmk_i2c_pm = {
 	SET_LATE_SYSTEM_SLEEP_PM_OPS(nmk_i2c_suspend_late, nmk_i2c_resume_early)
-	SET_PM_RUNTIME_PM_OPS(nmk_i2c_runtime_suspend,
+	SET_RUNTIME_PM_OPS(nmk_i2c_runtime_suspend,
 			nmk_i2c_runtime_resume,
 			NULL)
 };
@@ -1012,8 +1012,6 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 		goto err_no_mem;
 	}
 
-	pm_suspend_ignore_children(&adev->dev, true);
-
 	dev->clk = devm_clk_get(&adev->dev, NULL);
 	if (IS_ERR(dev->clk)) {
 		dev_err(&adev->dev, "could not get i2c clock\n");
@@ -1032,10 +1030,10 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 	adap = &dev->adap;
 	adap->dev.of_node = np;
 	adap->dev.parent = &adev->dev;
-	adap->owner	= THIS_MODULE;
-	adap->class	= I2C_CLASS_HWMON | I2C_CLASS_SPD | I2C_CLASS_DEPRECATED;
-	adap->algo	= &nmk_i2c_algo;
-	adap->timeout	= msecs_to_jiffies(dev->timeout);
+	adap->owner = THIS_MODULE;
+	adap->class = I2C_CLASS_DEPRECATED;
+	adap->algo = &nmk_i2c_algo;
+	adap->timeout = msecs_to_jiffies(dev->timeout);
 	snprintf(adap->name, sizeof(adap->name),
 		 "Nomadik I2C at %pR", &adev->res);
 
@@ -1046,10 +1044,8 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 		 adap->name, dev->virtbase);
 
 	ret = i2c_add_adapter(adap);
-	if (ret) {
-		dev_err(&adev->dev, "failed to add adapter\n");
+	if (ret)
 		goto err_no_adap;
-	}
 
 	pm_runtime_put(&adev->dev);
 
@@ -1090,7 +1086,7 @@ static struct i2c_vendor_data vendor_db8500 = {
 	.fifodepth = 32, /* Guessed from TFTR/RFTR = 15 */
 };
 
-static struct amba_id nmk_i2c_ids[] = {
+static const struct amba_id nmk_i2c_ids[] = {
 	{
 		.id	= 0x00180024,
 		.mask	= 0x00ffffff,

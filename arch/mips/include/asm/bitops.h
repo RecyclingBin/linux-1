@@ -17,25 +17,11 @@
 #include <linux/types.h>
 #include <asm/barrier.h>
 #include <asm/byteorder.h>		/* sigh ... */
+#include <asm/compiler.h>
 #include <asm/cpu-features.h>
+#include <asm/llsc.h>
 #include <asm/sgidefs.h>
 #include <asm/war.h>
-
-#if _MIPS_SZLONG == 32
-#define SZLONG_LOG 5
-#define SZLONG_MASK 31UL
-#define __LL		"ll	"
-#define __SC		"sc	"
-#define __INS		"ins	"
-#define __EXT		"ext	"
-#elif _MIPS_SZLONG == 64
-#define SZLONG_LOG 6
-#define SZLONG_MASK 63UL
-#define __LL		"lld	"
-#define __SC		"scd	"
-#define __INS		"dins	 "
-#define __EXT		"dext	 "
-#endif
 
 /*
  * These are the "slower" versions of the functions and are in bitops.c.
@@ -72,34 +58,36 @@ static inline void set_bit(unsigned long nr, volatile unsigned long *addr)
 
 	if (kernel_uses_llsc && R10000_LLSC_WAR) {
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL "%0, %1			# set_bit	\n"
 		"	or	%0, %2					\n"
 		"	" __SC	"%0, %1					\n"
 		"	beqzl	%0, 1b					\n"
-		"	.set	mips0					\n"
-		: "=&r" (temp), "=m" (*m)
-		: "ir" (1UL << bit), "m" (*m));
-#ifdef CONFIG_CPU_MIPSR2
+		"	.set	pop					\n"
+		: "=&r" (temp), "=" GCC_OFF_SMALL_ASM() (*m)
+		: "ir" (1UL << bit), GCC_OFF_SMALL_ASM() (*m));
+#if defined(CONFIG_CPU_MIPSR2) || defined(CONFIG_CPU_MIPSR6)
 	} else if (kernel_uses_llsc && __builtin_constant_p(bit)) {
 		do {
 			__asm__ __volatile__(
 			"	" __LL "%0, %1		# set_bit	\n"
 			"	" __INS "%0, %3, %2, 1			\n"
 			"	" __SC "%0, %1				\n"
-			: "=&r" (temp), "+m" (*m)
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 			: "ir" (bit), "r" (~0));
 		} while (unlikely(!temp));
-#endif /* CONFIG_CPU_MIPSR2 */
+#endif /* CONFIG_CPU_MIPSR2 || CONFIG_CPU_MIPSR6 */
 	} else if (kernel_uses_llsc) {
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL "%0, %1		# set_bit	\n"
 			"	or	%0, %2				\n"
 			"	" __SC	"%0, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 			: "ir" (1UL << bit));
 		} while (unlikely(!temp));
 	} else
@@ -124,34 +112,36 @@ static inline void clear_bit(unsigned long nr, volatile unsigned long *addr)
 
 	if (kernel_uses_llsc && R10000_LLSC_WAR) {
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL "%0, %1			# clear_bit	\n"
 		"	and	%0, %2					\n"
 		"	" __SC "%0, %1					\n"
 		"	beqzl	%0, 1b					\n"
-		"	.set	mips0					\n"
-		: "=&r" (temp), "+m" (*m)
+		"	.set	pop					\n"
+		: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 		: "ir" (~(1UL << bit)));
-#ifdef CONFIG_CPU_MIPSR2
+#if defined(CONFIG_CPU_MIPSR2) || defined(CONFIG_CPU_MIPSR6)
 	} else if (kernel_uses_llsc && __builtin_constant_p(bit)) {
 		do {
 			__asm__ __volatile__(
 			"	" __LL "%0, %1		# clear_bit	\n"
 			"	" __INS "%0, $0, %2, 1			\n"
 			"	" __SC "%0, %1				\n"
-			: "=&r" (temp), "+m" (*m)
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 			: "ir" (bit));
 		} while (unlikely(!temp));
-#endif /* CONFIG_CPU_MIPSR2 */
+#endif /* CONFIG_CPU_MIPSR2 || CONFIG_CPU_MIPSR6 */
 	} else if (kernel_uses_llsc) {
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL "%0, %1		# clear_bit	\n"
 			"	and	%0, %2				\n"
 			"	" __SC "%0, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 			: "ir" (~(1UL << bit)));
 		} while (unlikely(!temp));
 	} else
@@ -190,13 +180,14 @@ static inline void change_bit(unsigned long nr, volatile unsigned long *addr)
 		unsigned long temp;
 
 		__asm__ __volatile__(
+		"	.set	push				\n"
 		"	.set	arch=r4000			\n"
 		"1:	" __LL "%0, %1		# change_bit	\n"
 		"	xor	%0, %2				\n"
 		"	" __SC	"%0, %1				\n"
 		"	beqzl	%0, 1b				\n"
-		"	.set	mips0				\n"
-		: "=&r" (temp), "+m" (*m)
+		"	.set	pop				\n"
+		: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 		: "ir" (1UL << bit));
 	} else if (kernel_uses_llsc) {
 		unsigned long *m = ((unsigned long *) addr) + (nr >> SZLONG_LOG);
@@ -204,12 +195,13 @@ static inline void change_bit(unsigned long nr, volatile unsigned long *addr)
 
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL "%0, %1		# change_bit	\n"
 			"	xor	%0, %2				\n"
 			"	" __SC	"%0, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m)
 			: "ir" (1UL << bit));
 		} while (unlikely(!temp));
 	} else
@@ -237,14 +229,15 @@ static inline int test_and_set_bit(unsigned long nr,
 		unsigned long temp;
 
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL "%0, %1		# test_and_set_bit	\n"
 		"	or	%2, %0, %3				\n"
 		"	" __SC	"%2, %1					\n"
 		"	beqzl	%2, 1b					\n"
 		"	and	%2, %0, %3				\n"
-		"	.set	mips0					\n"
-		: "=&r" (temp), "+m" (*m), "=&r" (res)
+		"	.set	pop					\n"
+		: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 		: "r" (1UL << bit)
 		: "memory");
 	} else if (kernel_uses_llsc) {
@@ -253,12 +246,13 @@ static inline int test_and_set_bit(unsigned long nr,
 
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL "%0, %1	# test_and_set_bit	\n"
 			"	or	%2, %0, %3			\n"
 			"	" __SC	"%2, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m), "=&r" (res)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 			: "r" (1UL << bit)
 			: "memory");
 		} while (unlikely(!res));
@@ -291,13 +285,14 @@ static inline int test_and_set_bit_lock(unsigned long nr,
 		unsigned long temp;
 
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL "%0, %1		# test_and_set_bit	\n"
 		"	or	%2, %0, %3				\n"
 		"	" __SC	"%2, %1					\n"
 		"	beqzl	%2, 1b					\n"
 		"	and	%2, %0, %3				\n"
-		"	.set	mips0					\n"
+		"	.set	pop					\n"
 		: "=&r" (temp), "+m" (*m), "=&r" (res)
 		: "r" (1UL << bit)
 		: "memory");
@@ -307,12 +302,13 @@ static inline int test_and_set_bit_lock(unsigned long nr,
 
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL "%0, %1	# test_and_set_bit	\n"
 			"	or	%2, %0, %3			\n"
 			"	" __SC	"%2, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m), "=&r" (res)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 			: "r" (1UL << bit)
 			: "memory");
 		} while (unlikely(!res));
@@ -346,6 +342,7 @@ static inline int test_and_clear_bit(unsigned long nr,
 		unsigned long temp;
 
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL	"%0, %1		# test_and_clear_bit	\n"
 		"	or	%2, %0, %3				\n"
@@ -353,11 +350,11 @@ static inline int test_and_clear_bit(unsigned long nr,
 		"	" __SC	"%2, %1					\n"
 		"	beqzl	%2, 1b					\n"
 		"	and	%2, %0, %3				\n"
-		"	.set	mips0					\n"
-		: "=&r" (temp), "+m" (*m), "=&r" (res)
+		"	.set	pop					\n"
+		: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 		: "r" (1UL << bit)
 		: "memory");
-#ifdef CONFIG_CPU_MIPSR2
+#if defined(CONFIG_CPU_MIPSR2) || defined(CONFIG_CPU_MIPSR6)
 	} else if (kernel_uses_llsc && __builtin_constant_p(nr)) {
 		unsigned long *m = ((unsigned long *) addr) + (nr >> SZLONG_LOG);
 		unsigned long temp;
@@ -368,7 +365,7 @@ static inline int test_and_clear_bit(unsigned long nr,
 			"	" __EXT "%2, %0, %3, 1			\n"
 			"	" __INS "%0, $0, %3, 1			\n"
 			"	" __SC	"%0, %1				\n"
-			: "=&r" (temp), "+m" (*m), "=&r" (res)
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 			: "ir" (bit)
 			: "memory");
 		} while (unlikely(!temp));
@@ -379,13 +376,14 @@ static inline int test_and_clear_bit(unsigned long nr,
 
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL	"%0, %1 # test_and_clear_bit	\n"
 			"	or	%2, %0, %3			\n"
 			"	xor	%2, %3				\n"
 			"	" __SC	"%2, %1				\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m), "=&r" (res)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 			: "r" (1UL << bit)
 			: "memory");
 		} while (unlikely(!res));
@@ -420,14 +418,15 @@ static inline int test_and_change_bit(unsigned long nr,
 		unsigned long temp;
 
 		__asm__ __volatile__(
+		"	.set	push					\n"
 		"	.set	arch=r4000				\n"
 		"1:	" __LL	"%0, %1		# test_and_change_bit	\n"
 		"	xor	%2, %0, %3				\n"
 		"	" __SC	"%2, %1					\n"
 		"	beqzl	%2, 1b					\n"
 		"	and	%2, %0, %3				\n"
-		"	.set	mips0					\n"
-		: "=&r" (temp), "+m" (*m), "=&r" (res)
+		"	.set	pop					\n"
+		: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 		: "r" (1UL << bit)
 		: "memory");
 	} else if (kernel_uses_llsc) {
@@ -436,12 +435,13 @@ static inline int test_and_change_bit(unsigned long nr,
 
 		do {
 			__asm__ __volatile__(
-			"	.set	arch=r4000			\n"
+			"	.set	push				\n"
+			"	.set	"MIPS_ISA_ARCH_LEVEL"		\n"
 			"	" __LL	"%0, %1 # test_and_change_bit	\n"
 			"	xor	%2, %0, %3			\n"
 			"	" __SC	"\t%2, %1			\n"
-			"	.set	mips0				\n"
-			: "=&r" (temp), "+m" (*m), "=&r" (res)
+			"	.set	pop				\n"
+			: "=&r" (temp), "+" GCC_OFF_SMALL_ASM() (*m), "=&r" (res)
 			: "r" (1UL << bit)
 			: "memory");
 		} while (unlikely(!res));
@@ -468,8 +468,9 @@ static inline int test_and_change_bit(unsigned long nr,
  */
 static inline void __clear_bit_unlock(unsigned long nr, volatile unsigned long *addr)
 {
-	smp_mb();
+	smp_mb__before_llsc();
 	__clear_bit(nr, addr);
+	nudge_writes();
 }
 
 /*
@@ -480,11 +481,11 @@ static inline unsigned long __fls(unsigned long word)
 {
 	int num;
 
-	if (BITS_PER_LONG == 32 &&
+	if (BITS_PER_LONG == 32 && !__builtin_constant_p(word) &&
 	    __builtin_constant_p(cpu_has_clo_clz) && cpu_has_clo_clz) {
 		__asm__(
 		"	.set	push					\n"
-		"	.set	mips32					\n"
+		"	.set	"MIPS_ISA_LEVEL"			\n"
 		"	clz	%0, %1					\n"
 		"	.set	pop					\n"
 		: "=r" (num)
@@ -493,11 +494,11 @@ static inline unsigned long __fls(unsigned long word)
 		return 31 - num;
 	}
 
-	if (BITS_PER_LONG == 64 &&
+	if (BITS_PER_LONG == 64 && !__builtin_constant_p(word) &&
 	    __builtin_constant_p(cpu_has_mips64) && cpu_has_mips64) {
 		__asm__(
 		"	.set	push					\n"
-		"	.set	mips64					\n"
+		"	.set	"MIPS_ISA_LEVEL"			\n"
 		"	dclz	%0, %1					\n"
 		"	.set	pop					\n"
 		: "=r" (num)
@@ -558,8 +559,15 @@ static inline int fls(int x)
 {
 	int r;
 
-	if (__builtin_constant_p(cpu_has_clo_clz) && cpu_has_clo_clz) {
-		__asm__("clz %0, %1" : "=r" (x) : "r" (x));
+	if (!__builtin_constant_p(x) &&
+	    __builtin_constant_p(cpu_has_clo_clz) && cpu_has_clo_clz) {
+		__asm__(
+		"	.set	push					\n"
+		"	.set	"MIPS_ISA_LEVEL"			\n"
+		"	clz	%0, %1					\n"
+		"	.set	pop					\n"
+		: "=r" (x)
+		: "r" (x));
 
 		return 32 - x;
 	}

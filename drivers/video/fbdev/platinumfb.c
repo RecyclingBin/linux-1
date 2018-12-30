@@ -32,9 +32,7 @@
 #include <linux/nvram.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <asm/io.h>
 #include <asm/prom.h>
-#include <asm/pgtable.h>
 
 #include "macmodes.h"
 #include "platinumfb.h"
@@ -168,7 +166,7 @@ static int platinumfb_blank(int blank,  struct fb_info *fb)
 	struct fb_info_platinum *info = (struct fb_info_platinum *) fb;
 	int	ctrl;
 
-	ctrl = ld_le32(&info->platinum_regs->ctrl.r) | 0x33;
+	ctrl = le32_to_cpup(&info->platinum_regs->ctrl.r) | 0x33;
 	if (blank)
 		--blank_mode;
 	if (blank & VESA_VSYNC_SUSPEND)
@@ -577,8 +575,7 @@ static int platinumfb_probe(struct platform_device* odev)
 
 	/* frame buffer - map only 4MB */
 	pinfo->frame_buffer_phys = pinfo->rsrc_fb.start;
-	pinfo->frame_buffer = __ioremap(pinfo->rsrc_fb.start, 0x400000,
-					_PAGE_WRITETHRU);
+	pinfo->frame_buffer = ioremap_wt(pinfo->rsrc_fb.start, 0x400000);
 	pinfo->base_frame_buffer = pinfo->frame_buffer;
 
 	/* registers */
@@ -679,7 +676,6 @@ static struct platform_driver platinum_driver =
 {
 	.driver = {
 		.name = "platinumfb",
-		.owner = THIS_MODULE,
 		.of_match_table = platinumfb_match,
 	},
 	.probe		= platinumfb_probe,

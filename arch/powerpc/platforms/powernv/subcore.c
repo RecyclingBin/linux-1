@@ -18,12 +18,14 @@
 #include <linux/stop_machine.h>
 
 #include <asm/cputhreads.h>
+#include <asm/cpuidle.h>
 #include <asm/kvm_ppc.h>
 #include <asm/machdep.h>
 #include <asm/opal.h>
 #include <asm/smp.h>
 
 #include "subcore.h"
+#include "powernv.h"
 
 
 /*
@@ -159,6 +161,18 @@ static void wait_for_sync_step(int step)
 	mb();
 }
 
+static void update_hid_in_slw(u64 hid0)
+{
+	u64 idle_states = pnv_get_supported_cpuidle_states();
+
+	if (idle_states & OPAL_PM_WINKLE_ENABLED) {
+		/* OPAL call to patch slw with the new HID0 value */
+		u64 cpu_pir = hard_smp_processor_id();
+
+		opal_slw_set_reg(cpu_pir, SPRN_HID0, hid0);
+	}
+}
+
 static void unsplit_core(void)
 {
 	u64 hid0, mask;
@@ -169,7 +183,7 @@ static void unsplit_core(void)
 	cpu = smp_processor_id();
 	if (cpu_thread_in_core(cpu) != 0) {
 		while (mfspr(SPRN_HID0) & mask)
-			power7_nap(0);
+			power7_idle_insn(PNV_THREAD_NAP);
 
 		per_cpu(split_state, cpu).step = SYNC_STEP_UNSPLIT;
 		return;
@@ -177,7 +191,8 @@ static void unsplit_core(void)
 
 	hid0 = mfspr(SPRN_HID0);
 	hid0 &= ~HID0_POWER8_DYNLPARDIS;
-	mtspr(SPRN_HID0, hid0);
+	update_power8_hid0(hid0);
+	update_hid_in_slw(hid0);
 
 	while (mfspr(SPRN_HID0) & mask)
 		cpu_relax();
@@ -213,7 +228,8 @@ static void split_core(int new_mode)
 	/* Write new mode */
 	hid0  = mfspr(SPRN_HID0);
 	hid0 |= HID0_POWER8_DYNLPARDIS | split_parms[i].value;
-	mtspr(SPRN_HID0, hid0);
+	update_power8_hid0(hid0);
+	update_hid_in_slw(hid0);
 
 	/* Wait for it to happen */
 	while (!(mfspr(SPRN_HID0) & split_parms[i].mask))
@@ -250,6 +266,25 @@ bool cpu_core_split_required(void)
 	return true;
 }
 
+void update_subcore_sibling_mask(void)
+{
+	int cpu;
+	/*
+	 * sibling mask for the first cpu. Left shift this by required bits
+	 * to get sibling mask for the rest of the cpus.
+	 */
+	int sibling_mask_first_cpu =  (1 << threads_per_subcore) - 1;
+
+	for_each_possible_cpu(cpu) {
+		int tid = cpu_thread_in_core(cpu);
+		int offset = (tid / threads_per_subcore) * threads_per_subcore;
+		int mask = sibling_mask_first_cpu << offset;
+
+		paca_ptrs[cpu]->subcore_sibling_mask = mask;
+
+	}
+}
+
 static int cpu_update_split_mode(void *data)
 {
 	int cpu, new_mode = *(int *)data;
@@ -283,6 +318,7 @@ static int cpu_update_split_mode(void *data)
 		/* Make the new mode public */
 		subcores_per_core = new_mode;
 		threads_per_subcore = threads_per_core / subcores_per_core;
+		update_subcore_sibling_mask();
 
 		/* Make sure the new mode is written before we exit */
 		mb();
@@ -313,7 +349,7 @@ static int set_subcores_per_core(int new_mode)
 		state->master = 0;
 	}
 
-	get_online_cpus();
+	cpus_read_lock();
 
 	/* This cpu will update the globals before exiting stop machine */
 	this_cpu_ptr(&split_state)->master = 1;
@@ -321,9 +357,10 @@ static int set_subcores_per_core(int new_mode)
 	/* Ensure state is consistent before we call the other cpus */
 	mb();
 
-	stop_machine(cpu_update_split_mode, &new_mode, cpu_online_mask);
+	stop_machine_cpuslocked(cpu_update_split_mode, &new_mode,
+				cpu_online_mask);
 
-	put_online_cpus();
+	cpus_read_unlock();
 
 	return 0;
 }
@@ -372,7 +409,13 @@ static DEVICE_ATTR(subcores_per_core, 0644,
 
 static int subcore_init(void)
 {
-	if (!cpu_has_feature(CPU_FTR_ARCH_207S))
+	unsigned pvr_ver;
+
+	pvr_ver = PVR_VER(mfspr(SPRN_PVR));
+
+	if (pvr_ver != PVR_POWER8 &&
+	    pvr_ver != PVR_POWER8E &&
+	    pvr_ver != PVR_POWER8NVL)
 		return 0;
 
 	/*

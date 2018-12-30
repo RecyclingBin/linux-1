@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * NFS exporting and validation.
  *
@@ -20,6 +21,7 @@
 #include "nfsd.h"
 #include "nfsfh.h"
 #include "netns.h"
+#include "pnfs.h"
 
 #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
 
@@ -44,7 +46,7 @@ static void expkey_put(struct kref *ref)
 	    !test_bit(CACHE_NEGATIVE, &key->h.flags))
 		path_put(&key->ek_path);
 	auth_domain_put(key->ek_client);
-	kfree(key);
+	kfree_rcu(key, ek_rcu);
 }
 
 static void expkey_request(struct cache_detail *cd,
@@ -230,7 +232,7 @@ static struct cache_head *expkey_alloc(void)
 		return NULL;
 }
 
-static struct cache_detail svc_expkey_cache_template = {
+static const struct cache_detail svc_expkey_cache_template = {
 	.owner		= THIS_MODULE,
 	.hash_size	= EXPKEY_HASHMAX,
 	.name		= "nfsd.fh",
@@ -263,7 +265,7 @@ svc_expkey_lookup(struct cache_detail *cd, struct svc_expkey *item)
 	struct cache_head *ch;
 	int hash = svc_expkey_hash(item);
 
-	ch = sunrpc_cache_lookup(cd, &item->h, hash);
+	ch = sunrpc_cache_lookup_rcu(cd, &item->h, hash);
 	if (ch)
 		return container_of(ch, struct svc_expkey, h);
 	else
@@ -312,7 +314,7 @@ static void svc_export_put(struct kref *ref)
 	auth_domain_put(exp->ex_client);
 	nfsd4_fslocs_free(&exp->ex_fslocs);
 	kfree(exp->ex_uuid);
-	kfree(exp);
+	kfree_rcu(exp, ex_rcu);
 }
 
 static void svc_export_request(struct cache_detail *cd,
@@ -402,8 +404,9 @@ fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc)
 	if (fsloc->locations_count == 0)
 		return 0;
 
-	fsloc->locations = kzalloc(fsloc->locations_count
-			* sizeof(struct nfsd4_fs_location), GFP_KERNEL);
+	fsloc->locations = kcalloc(fsloc->locations_count,
+				   sizeof(struct nfsd4_fs_location),
+				   GFP_KERNEL);
 	if (!fsloc->locations)
 		return -ENOMEM;
 	for (i=0; i < fsloc->locations_count; i++) {
@@ -485,7 +488,7 @@ secinfo_parse(char **mesg, char *buf, struct svc_export *exp) { return 0; }
 #endif
 
 static inline int
-uuid_parse(char **mesg, char *buf, unsigned char **puuid)
+nfsd_uuid_parse(char **mesg, char *buf, unsigned char **puuid)
 {
 	int len;
 
@@ -545,6 +548,7 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 
 	exp.ex_client = dom;
 	exp.cd = cd;
+	exp.ex_devid_map = NULL;
 
 	/* expiry */
 	err = -EINVAL;
@@ -584,7 +588,7 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 			if (strcmp(buf, "fsloc") == 0)
 				err = fsloc_parse(&mesg, buf, &exp.ex_fslocs);
 			else if (strcmp(buf, "uuid") == 0)
-				err = uuid_parse(&mesg, buf, &exp.ex_uuid);
+				err = nfsd_uuid_parse(&mesg, buf, &exp.ex_uuid);
 			else if (strcmp(buf, "secinfo") == 0)
 				err = secinfo_parse(&mesg, buf, &exp);
 			else
@@ -597,7 +601,7 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 				goto out4;
 		}
 
-		err = check_export(exp.ex_path.dentry->d_inode, &exp.ex_flags,
+		err = check_export(d_inode(exp.ex_path.dentry), &exp.ex_flags,
 				   exp.ex_uuid);
 		if (err)
 			goto out4;
@@ -621,6 +625,8 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 		if (!gid_valid(exp.ex_anon_gid))
 			goto out4;
 		err = 0;
+
+		nfsd4_setup_layout_type(&exp);
 	}
 
 	expp = svc_export_lookup(&exp);
@@ -687,8 +693,7 @@ static int svc_export_match(struct cache_head *a, struct cache_head *b)
 	struct svc_export *orig = container_of(a, struct svc_export, h);
 	struct svc_export *new = container_of(b, struct svc_export, h);
 	return orig->ex_client == new->ex_client &&
-		orig->ex_path.dentry == new->ex_path.dentry &&
-		orig->ex_path.mnt == new->ex_path.mnt;
+		path_equal(&orig->ex_path, &new->ex_path);
 }
 
 static void svc_export_init(struct cache_head *cnew, struct cache_head *citem)
@@ -698,11 +703,12 @@ static void svc_export_init(struct cache_head *cnew, struct cache_head *citem)
 
 	kref_get(&item->ex_client->ref);
 	new->ex_client = item->ex_client;
-	new->ex_path.dentry = dget(item->ex_path.dentry);
-	new->ex_path.mnt = mntget(item->ex_path.mnt);
+	new->ex_path = item->ex_path;
+	path_get(&item->ex_path);
 	new->ex_fslocs.locations = NULL;
 	new->ex_fslocs.locations_count = 0;
 	new->ex_fslocs.migrated = 0;
+	new->ex_layout_types = 0;
 	new->ex_uuid = NULL;
 	new->cd = item->cd;
 }
@@ -717,6 +723,8 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
 	new->ex_anon_uid = item->ex_anon_uid;
 	new->ex_anon_gid = item->ex_anon_gid;
 	new->ex_fsid = item->ex_fsid;
+	new->ex_devid_map = item->ex_devid_map;
+	item->ex_devid_map = NULL;
 	new->ex_uuid = item->ex_uuid;
 	item->ex_uuid = NULL;
 	new->ex_fslocs.locations = item->ex_fslocs.locations;
@@ -725,6 +733,7 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
 	item->ex_fslocs.locations_count = 0;
 	new->ex_fslocs.migrated = item->ex_fslocs.migrated;
 	item->ex_fslocs.migrated = 0;
+	new->ex_layout_types = item->ex_layout_types;
 	new->ex_nflavors = item->ex_nflavors;
 	for (i = 0; i < MAX_SECINFO_LIST; i++) {
 		new->ex_flavors[i] = item->ex_flavors[i];
@@ -740,7 +749,7 @@ static struct cache_head *svc_export_alloc(void)
 		return NULL;
 }
 
-static struct cache_detail svc_export_cache_template = {
+static const struct cache_detail svc_export_cache_template = {
 	.owner		= THIS_MODULE,
 	.hash_size	= EXPORT_HASHMAX,
 	.name		= "nfsd.export",
@@ -771,7 +780,7 @@ svc_export_lookup(struct svc_export *exp)
 	struct cache_head *ch;
 	int hash = svc_export_hash(exp);
 
-	ch = sunrpc_cache_lookup(exp->cd, &exp->h, hash);
+	ch = sunrpc_cache_lookup_rcu(exp->cd, &exp->h, hash);
 	if (ch)
 		return container_of(ch, struct svc_export, h);
 	else
@@ -883,7 +892,7 @@ exp_rootfh(struct net *net, struct auth_domain *clp, char *name,
 		printk("nfsd: exp_rootfh path not found %s", name);
 		return err;
 	}
-	inode = path.dentry->d_inode;
+	inode = d_inode(path.dentry);
 
 	dprintk("nfsd: exp_rootfh(%s [%p] %s:%s/%ld)\n",
 		 name, path.dentry, clp->name,
@@ -947,6 +956,16 @@ __be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp)
 		    rqstp->rq_cred.cr_flavor == RPC_AUTH_UNIX)
 			return 0;
 	}
+
+	/* If the compound op contains a spo_must_allowed op,
+	 * it will be sent with integrity/protection which
+	 * will have to be expressly allowed on mounts that
+	 * don't support it
+	 */
+
+	if (nfsd4_spo_must_allow(rqstp))
+		return 0;
+
 	return nfserr_wrongsec;
 }
 
@@ -1068,73 +1087,6 @@ exp_pseudoroot(struct svc_rqst *rqstp, struct svc_fh *fhp)
 	return rv;
 }
 
-/* Iterator */
-
-static void *e_start(struct seq_file *m, loff_t *pos)
-	__acquires(((struct cache_detail *)m->private)->hash_lock)
-{
-	loff_t n = *pos;
-	unsigned hash, export;
-	struct cache_head *ch;
-	struct cache_detail *cd = m->private;
-	struct cache_head **export_table = cd->hash_table;
-
-	read_lock(&cd->hash_lock);
-	if (!n--)
-		return SEQ_START_TOKEN;
-	hash = n >> 32;
-	export = n & ((1LL<<32) - 1);
-
-	
-	for (ch=export_table[hash]; ch; ch=ch->next)
-		if (!export--)
-			return ch;
-	n &= ~((1LL<<32) - 1);
-	do {
-		hash++;
-		n += 1LL<<32;
-	} while(hash < EXPORT_HASHMAX && export_table[hash]==NULL);
-	if (hash >= EXPORT_HASHMAX)
-		return NULL;
-	*pos = n+1;
-	return export_table[hash];
-}
-
-static void *e_next(struct seq_file *m, void *p, loff_t *pos)
-{
-	struct cache_head *ch = p;
-	int hash = (*pos >> 32);
-	struct cache_detail *cd = m->private;
-	struct cache_head **export_table = cd->hash_table;
-
-	if (p == SEQ_START_TOKEN)
-		hash = 0;
-	else if (ch->next == NULL) {
-		hash++;
-		*pos += 1LL<<32;
-	} else {
-		++*pos;
-		return ch->next;
-	}
-	*pos &= ~((1LL<<32) - 1);
-	while (hash < EXPORT_HASHMAX && export_table[hash] == NULL) {
-		hash++;
-		*pos += 1LL<<32;
-	}
-	if (hash >= EXPORT_HASHMAX)
-		return NULL;
-	++*pos;
-	return export_table[hash];
-}
-
-static void e_stop(struct seq_file *m, void *p)
-	__releases(((struct cache_detail *)m->private)->hash_lock)
-{
-	struct cache_detail *cd = m->private;
-
-	read_unlock(&cd->hash_lock);
-}
-
 static struct flags {
 	int flag;
 	char *name[2];
@@ -1145,11 +1097,14 @@ static struct flags {
 	{ NFSEXP_ALLSQUASH, {"all_squash", ""}},
 	{ NFSEXP_ASYNC, {"async", "sync"}},
 	{ NFSEXP_GATHERED_WRITES, {"wdelay", "no_wdelay"}},
+	{ NFSEXP_NOREADDIRPLUS, {"nordirplus", ""}},
 	{ NFSEXP_NOHIDE, {"nohide", ""}},
 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
 	{ NFSEXP_NOAUTHNLM, {"insecure_locks", ""}},
 	{ NFSEXP_V4ROOT, {"v4root", ""}},
+	{ NFSEXP_PNFS, {"pnfs", ""}},
+	{ NFSEXP_SECURITY_LABEL, {"security_label", ""}},
 	{ 0, {"", ""}}
 };
 
@@ -1253,7 +1208,7 @@ static int e_show(struct seq_file *m, void *p)
 		return 0;
 	}
 
-	cache_get(&exp->h);
+	exp_get(exp);
 	if (cache_check(cd, &exp->h, NULL))
 		return 0;
 	exp_put(exp);
@@ -1261,9 +1216,9 @@ static int e_show(struct seq_file *m, void *p)
 }
 
 const struct seq_operations nfs_exports_op = {
-	.start	= e_start,
-	.next	= e_next,
-	.stop	= e_stop,
+	.start	= cache_seq_start_rcu,
+	.next	= cache_seq_next_rcu,
+	.stop	= cache_seq_stop_rcu,
 	.show	= e_show,
 };
 
@@ -1276,7 +1231,7 @@ nfsd_export_init(struct net *net)
 	int rv;
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
-	dprintk("nfsd: initializing export module (net: %p).\n", net);
+	dprintk("nfsd: initializing export module (net: %x).\n", net->ns.inum);
 
 	nn->svc_export_cache = cache_create_net(&svc_export_cache_template, net);
 	if (IS_ERR(nn->svc_export_cache))
@@ -1324,7 +1279,7 @@ nfsd_export_shutdown(struct net *net)
 {
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
-	dprintk("nfsd: shutting down export module (net: %p).\n", net);
+	dprintk("nfsd: shutting down export module (net: %x).\n", net->ns.inum);
 
 	cache_unregister_net(nn->svc_expkey_cache, net);
 	cache_unregister_net(nn->svc_export_cache, net);
@@ -1332,5 +1287,5 @@ nfsd_export_shutdown(struct net *net)
 	cache_destroy_net(nn->svc_export_cache, net);
 	svcauth_unix_purge(net);
 
-	dprintk("nfsd: export shutdown complete (net: %p).\n", net);
+	dprintk("nfsd: export shutdown complete (net: %x).\n", net->ns.inum);
 }

@@ -61,7 +61,7 @@ MODULE_PARM_DESC(enable, "Enable Digigram " CARD_NAME " soundcard.");
 /*
  */
 
-static DEFINE_PCI_DEVICE_TABLE(snd_mixart_ids) = {
+static const struct pci_device_id snd_mixart_ids[] = {
 	{ PCI_VDEVICE(MOTOROLA, 0x0003), 0, }, /* MC8240 */
 	{ 0, }
 };
@@ -132,7 +132,7 @@ static int mixart_set_pipe_state(struct mixart_mgr *mgr,
 	}
 
 	if(start) {
-		u32 stat;
+		u32 stat = 0;
 
 		group_state.pipe_count = 0; /* in case of start same command once again with pipe_count=0 */
 
@@ -182,6 +182,7 @@ static int mixart_set_clock(struct mixart_mgr *mgr,
 	case PIPE_RUNNING:
 		if(rate != 0)
 			break;
+		/* fall through */
 	default:
 		if(rate == 0)
 			return 0; /* nothing to do */
@@ -675,7 +676,7 @@ static int snd_mixart_hw_free(struct snd_pcm_substream *subs)
 /*
  *  TODO CONFIGURATION SPACE for all pcms, mono pcm must update channels_max
  */
-static struct snd_pcm_hardware snd_mixart_analog_caps =
+static const struct snd_pcm_hardware snd_mixart_analog_caps =
 {
 	.info             = ( SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 			      SNDRV_PCM_INFO_MMAP_VALID |
@@ -696,7 +697,7 @@ static struct snd_pcm_hardware snd_mixart_analog_caps =
 	.periods_max      = (32*1024/256),
 };
 
-static struct snd_pcm_hardware snd_mixart_digital_caps =
+static const struct snd_pcm_hardware snd_mixart_digital_caps =
 {
 	.info             = ( SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 			      SNDRV_PCM_INFO_MMAP_VALID |
@@ -922,7 +923,7 @@ static snd_pcm_uframes_t snd_mixart_stream_pointer(struct snd_pcm_substream *sub
 
 
 
-static struct snd_pcm_ops snd_mixart_playback_ops = {
+static const struct snd_pcm_ops snd_mixart_playback_ops = {
 	.open      = snd_mixart_playback_open,
 	.close     = snd_mixart_close,
 	.ioctl     = snd_pcm_lib_ioctl,
@@ -933,7 +934,7 @@ static struct snd_pcm_ops snd_mixart_playback_ops = {
 	.pointer   = snd_mixart_stream_pointer,
 };
 
-static struct snd_pcm_ops snd_mixart_capture_ops = {
+static const struct snd_pcm_ops snd_mixart_capture_ops = {
 	.open      = snd_mixart_capture_open,
 	.close     = snd_mixart_close,
 	.ioctl     = snd_pcm_lib_ioctl,
@@ -986,6 +987,7 @@ static int snd_mixart_pcm_analog(struct snd_mixart *chip)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_mixart_capture_ops);
 
 	pcm->info_flags = 0;
+	pcm->nonatomic = true;
 	strcpy(pcm->name, name);
 
 	preallocate_buffers(chip, pcm);
@@ -1018,6 +1020,7 @@ static int snd_mixart_pcm_digital(struct snd_mixart *chip)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_mixart_capture_ops);
 
 	pcm->info_flags = 0;
+	pcm->nonatomic = true;
 	strcpy(pcm->name, name);
 
 	preallocate_buffers(chip, pcm);
@@ -1050,10 +1053,8 @@ static int snd_mixart_create(struct mixart_mgr *mgr, struct snd_card *card, int 
 	};
 
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
-	if (! chip) {
-		dev_err(card->dev, "cannot allocate chip\n");
+	if (!chip)
 		return -ENOMEM;
-	}
 
 	chip->card = card;
 	chip->chip_idx = idx;
@@ -1112,10 +1113,9 @@ static int snd_mixart_free(struct mixart_mgr *mgr)
 	}
 
 	/* release the i/o ports */
-	for (i = 0; i < 2; i++) {
-		if (mgr->mem[i].virt)
-			iounmap(mgr->mem[i].virt);
-	}
+	for (i = 0; i < 2; ++i)
+		iounmap(mgr->mem[i].virt);
+
 	pci_release_regions(mgr->pci);
 
 	/* free flowarray */
@@ -1268,7 +1268,7 @@ static int snd_mixart_probe(struct pci_dev *pci,
 	pci_set_master(pci);
 
 	/* check if we can restrict PCI DMA transfers to 32 bits */
-	if (pci_set_dma_mask(pci, DMA_BIT_MASK(32)) < 0) {
+	if (dma_set_mask(&pci->dev, DMA_BIT_MASK(32)) < 0) {
 		dev_err(&pci->dev,
 			"architecture does not support 32bit PCI busmaster DMA\n");
 		pci_disable_device(pci);
@@ -1303,34 +1303,26 @@ static int snd_mixart_probe(struct pci_dev *pci,
 		}
 	}
 
-	if (request_irq(pci->irq, snd_mixart_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, mgr)) {
+	if (request_threaded_irq(pci->irq, snd_mixart_interrupt,
+				 snd_mixart_threaded_irq, IRQF_SHARED,
+				 KBUILD_MODNAME, mgr)) {
 		dev_err(&pci->dev, "unable to grab IRQ %d\n", pci->irq);
 		snd_mixart_free(mgr);
 		return -EBUSY;
 	}
 	mgr->irq = pci->irq;
 
-	sprintf(mgr->shortname, "Digigram miXart");
-	sprintf(mgr->longname, "%s at 0x%lx & 0x%lx, irq %i", mgr->shortname, mgr->mem[0].phys, mgr->mem[1].phys, mgr->irq);
-
-	/* ISR spinlock  */
-	spin_lock_init(&mgr->lock);
-
 	/* init mailbox  */
 	mgr->msg_fifo_readptr = 0;
 	mgr->msg_fifo_writeptr = 0;
 
-	spin_lock_init(&mgr->msg_lock);
-	mutex_init(&mgr->msg_mutex);
+	mutex_init(&mgr->lock);
+	mutex_init(&mgr->msg_lock);
 	init_waitqueue_head(&mgr->msg_sleep);
 	atomic_set(&mgr->msg_processed, 0);
 
 	/* init setup mutex*/
 	mutex_init(&mgr->setup_mutex);
-
-	/* init message taslket */
-	tasklet_init(&mgr->msg_taskq, snd_mixart_msg_tasklet, (unsigned long) mgr);
 
 	/* card assignment */
 	mgr->num_cards = MIXART_MAX_CARDS; /* 4  FIXME: configurable? */
@@ -1354,8 +1346,11 @@ static int snd_mixart_probe(struct pci_dev *pci,
 		}
 
 		strcpy(card->driver, CARD_NAME);
-		sprintf(card->shortname, "%s [PCM #%d]", mgr->shortname, i);
-		sprintf(card->longname, "%s [PCM #%d]", mgr->longname, i);
+		snprintf(card->shortname, sizeof(card->shortname),
+			 "Digigram miXart [PCM #%d]", i);
+		snprintf(card->longname, sizeof(card->longname),
+			"Digigram miXart at 0x%lx & 0x%lx, irq %i [PCM #%d]",
+			mgr->mem[0].phys, mgr->mem[1].phys, mgr->irq, i);
 
 		if ((err = snd_mixart_create(mgr, card, i)) < 0) {
 			snd_card_free(card);

@@ -1,13 +1,8 @@
-/* linux/arch/arm/mach-s3c2412/mach-vstms.c
- *
- * (C) 2006 Thomas Gleixner <tglx@linutronix.de>
- *
- * Derived from mach-smdk2413.c - (C) 2006 Simtec Electronics
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// (C) 2006 Thomas Gleixner <tglx@linutronix.de>
+//
+// Derived from mach-smdk2413.c - (C) 2006 Simtec Electronics
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -20,7 +15,7 @@
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
 #include <linux/memblock.h>
@@ -42,7 +37,6 @@
 #include <linux/platform_data/i2c-s3c2410.h>
 #include <linux/platform_data/mtd-nand-s3c2410.h>
 
-#include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/samsung-time.h>
@@ -118,6 +112,7 @@ static struct s3c2410_platform_nand __initdata vstms_nand_info = {
 	.twrph1		= 20,
 	.nr_sets	= ARRAY_SIZE(vstms_nand_sets),
 	.sets		= vstms_nand_sets,
+	.ecc_mode       = NAND_ECC_SOFT,
 };
 
 static struct platform_device *vstms_devices[] __initdata = {
@@ -166,5 +161,4 @@ MACHINE_START(VSTMS, "VSTMS")
 	.init_machine	= vstms_init,
 	.map_io		= vstms_map_io,
 	.init_time	= vstms_init_time,
-	.restart	= s3c2412_restart,
 MACHINE_END

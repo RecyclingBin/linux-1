@@ -1,16 +1,12 @@
-/* linux/arch/arm/mach-s3c2440/mach-nexcoder.c
- *
- * Copyright (c) 2004 Nex Vision
- *   Guillaume GOURAT <guillaume.gourat@nexvision.tv>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Modifications:
- *     15-10-2004 GG  Created initial version
- *     12-03-2005 BJD Updated for release
- */
+// SPDX-License-Identifier: GPL-2.0
+// linux/arch/arm/mach-s3c2440/mach-nexcoder.c
+//
+// Copyright (c) 2004 Nex Vision
+//   Guillaume GOURAT <guillaume.gourat@nexvision.tv>
+//
+// Modifications:
+//     15-10-2004 GG  Created initial version
+//     12-03-2005 BJD Updated for release
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -159,5 +155,4 @@ MACHINE_START(NEXCODER_2440, "NexVision - Nexcoder 2440")
 	.init_machine	= nexcoder_init,
 	.init_irq	= s3c2440_init_irq,
 	.init_time	= nexcoder_init_time,
-	.restart	= s3c244x_restart,
 MACHINE_END

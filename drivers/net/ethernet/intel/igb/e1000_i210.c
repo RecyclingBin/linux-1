@@ -1,25 +1,5 @@
-/* Intel(R) Gigabit Ethernet Linux driver
- * Copyright(c) 2007-2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- */
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2007 - 2018 Intel Corporation. */
 
 /* e1000_i210
  * e1000_i211
@@ -699,9 +679,9 @@ static s32 igb_update_flash_i210(struct e1000_hw *hw)
 
 	ret_val = igb_pool_flash_update_done_i210(hw);
 	if (ret_val)
-		hw_dbg("Flash update complete\n");
-	else
 		hw_dbg("Flash update time out\n");
+	else
+		hw_dbg("Flash update complete\n");
 
 out:
 	return ret_val;
@@ -833,4 +813,99 @@ s32 igb_init_nvm_params_i210(struct e1000_hw *hw)
 		nvm->ops.update   = NULL;
 	}
 	return ret_val;
+}
+
+/**
+ * igb_pll_workaround_i210
+ * @hw: pointer to the HW structure
+ *
+ * Works around an errata in the PLL circuit where it occasionally
+ * provides the wrong clock frequency after power up.
+ **/
+s32 igb_pll_workaround_i210(struct e1000_hw *hw)
+{
+	s32 ret_val;
+	u32 wuc, mdicnfg, ctrl, ctrl_ext, reg_val;
+	u16 nvm_word, phy_word, pci_word, tmp_nvm;
+	int i;
+
+	/* Get and set needed register values */
+	wuc = rd32(E1000_WUC);
+	mdicnfg = rd32(E1000_MDICNFG);
+	reg_val = mdicnfg & ~E1000_MDICNFG_EXT_MDIO;
+	wr32(E1000_MDICNFG, reg_val);
+
+	/* Get data from NVM, or set default */
+	ret_val = igb_read_invm_word_i210(hw, E1000_INVM_AUTOLOAD,
+					  &nvm_word);
+	if (ret_val)
+		nvm_word = E1000_INVM_DEFAULT_AL;
+	tmp_nvm = nvm_word | E1000_INVM_PLL_WO_VAL;
+	igb_write_phy_reg_82580(hw, I347AT4_PAGE_SELECT, E1000_PHY_PLL_FREQ_PAGE);
+	phy_word = E1000_PHY_PLL_UNCONF;
+	for (i = 0; i < E1000_MAX_PLL_TRIES; i++) {
+		/* check current state directly from internal PHY */
+		igb_read_phy_reg_82580(hw, E1000_PHY_PLL_FREQ_REG, &phy_word);
+		if ((phy_word & E1000_PHY_PLL_UNCONF)
+		    != E1000_PHY_PLL_UNCONF) {
+			ret_val = 0;
+			break;
+		} else {
+			ret_val = -E1000_ERR_PHY;
+		}
+		/* directly reset the internal PHY */
+		ctrl = rd32(E1000_CTRL);
+		wr32(E1000_CTRL, ctrl|E1000_CTRL_PHY_RST);
+
+		ctrl_ext = rd32(E1000_CTRL_EXT);
+		ctrl_ext |= (E1000_CTRL_EXT_PHYPDEN | E1000_CTRL_EXT_SDLPE);
+		wr32(E1000_CTRL_EXT, ctrl_ext);
+
+		wr32(E1000_WUC, 0);
+		reg_val = (E1000_INVM_AUTOLOAD << 4) | (tmp_nvm << 16);
+		wr32(E1000_EEARBC_I210, reg_val);
+
+		igb_read_pci_cfg(hw, E1000_PCI_PMCSR, &pci_word);
+		pci_word |= E1000_PCI_PMCSR_D3;
+		igb_write_pci_cfg(hw, E1000_PCI_PMCSR, &pci_word);
+		usleep_range(1000, 2000);
+		pci_word &= ~E1000_PCI_PMCSR_D3;
+		igb_write_pci_cfg(hw, E1000_PCI_PMCSR, &pci_word);
+		reg_val = (E1000_INVM_AUTOLOAD << 4) | (nvm_word << 16);
+		wr32(E1000_EEARBC_I210, reg_val);
+
+		/* restore WUC register */
+		wr32(E1000_WUC, wuc);
+	}
+	igb_write_phy_reg_82580(hw, I347AT4_PAGE_SELECT, 0);
+	/* restore MDICNFG setting */
+	wr32(E1000_MDICNFG, mdicnfg);
+	return ret_val;
+}
+
+/**
+ *  igb_get_cfg_done_i210 - Read config done bit
+ *  @hw: pointer to the HW structure
+ *
+ *  Read the management control register for the config done bit for
+ *  completion status.  NOTE: silicon which is EEPROM-less will fail trying
+ *  to read the config done bit, so an error is *ONLY* logged and returns
+ *  0.  If we were to return with error, EEPROM-less silicon
+ *  would not be able to be reset or change link.
+ **/
+s32 igb_get_cfg_done_i210(struct e1000_hw *hw)
+{
+	s32 timeout = PHY_CFG_TIMEOUT;
+	u32 mask = E1000_NVM_CFG_DONE_PORT_0;
+
+	while (timeout) {
+		if (rd32(E1000_EEMNGCTL_I210) & mask)
+			break;
+		usleep_range(1000, 2000);
+		timeout--;
+	}
+	if (!timeout)
+		hw_dbg("MNG configuration cycle has not completed.\n");
+
+	return 0;
 }

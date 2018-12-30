@@ -24,10 +24,9 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/fixed.h>
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/slab.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
 
@@ -40,13 +39,15 @@ struct fixed_voltage_data {
 /**
  * of_get_fixed_voltage_config - extract fixed_voltage_config structure info
  * @dev: device requesting for fixed_voltage_config
+ * @desc: regulator description
  *
  * Populates fixed_voltage_config structure by extracting data from device
  * tree node, returns a pointer to the populated structure of NULL if memory
  * alloc fails.
  */
 static struct fixed_voltage_config *
-of_get_fixed_voltage_config(struct device *dev)
+of_get_fixed_voltage_config(struct device *dev,
+			    const struct regulator_desc *desc)
 {
 	struct fixed_voltage_config *config;
 	struct device_node *np = dev->of_node;
@@ -57,7 +58,7 @@ of_get_fixed_voltage_config(struct device *dev)
 	if (!config)
 		return ERR_PTR(-ENOMEM);
 
-	config->init_data = of_get_regulator_init_data(dev, dev->of_node);
+	config->init_data = of_get_regulator_init_data(dev, dev->of_node, desc);
 	if (!config->init_data)
 		return ERR_PTR(-EINVAL);
 
@@ -76,25 +77,16 @@ of_get_fixed_voltage_config(struct device *dev)
 	if (init_data->constraints.boot_on)
 		config->enabled_at_boot = true;
 
-	config->gpio = of_get_named_gpio(np, "gpio", 0);
-	/*
-	 * of_get_named_gpio() currently returns ENODEV rather than
-	 * EPROBE_DEFER. This code attempts to be compatible with both
-	 * for now; the ENODEV check can be removed once the API is fixed.
-	 * of_get_named_gpio() doesn't differentiate between a missing
-	 * property (which would be fine here, since the GPIO is optional)
-	 * and some other error. Patches have been posted for both issues.
-	 * Once they are check in, we should replace this with:
-	 * if (config->gpio < 0 && config->gpio != -ENOENT)
-	 */
-	if ((config->gpio == -ENODEV) || (config->gpio == -EPROBE_DEFER))
-		return ERR_PTR(-EPROBE_DEFER);
-
 	of_property_read_u32(np, "startup-delay-us", &config->startup_delay);
 
-	config->enable_high = of_property_read_bool(np, "enable-active-high");
-	config->gpio_is_open_drain = of_property_read_bool(np,
-							   "gpio-open-drain");
+	/*
+	 * FIXME: we pulled active low/high and open drain handling into
+	 * gpiolib so it will be handled there. Delete this in the second
+	 * step when we also remove the custom inversion handling for all
+	 * legacy boardfiles.
+	 */
+	config->enable_high = 1;
+	config->gpio_is_open_drain = 0;
 
 	if (of_find_property(np, "vin-supply", NULL))
 		config->input_supply = "vin";
@@ -110,10 +102,17 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	struct fixed_voltage_config *config;
 	struct fixed_voltage_data *drvdata;
 	struct regulator_config cfg = { };
+	enum gpiod_flags gflags;
 	int ret;
 
+	drvdata = devm_kzalloc(&pdev->dev, sizeof(struct fixed_voltage_data),
+			       GFP_KERNEL);
+	if (!drvdata)
+		return -ENOMEM;
+
 	if (pdev->dev.of_node) {
-		config = of_get_fixed_voltage_config(&pdev->dev);
+		config = of_get_fixed_voltage_config(&pdev->dev,
+						     &drvdata->desc);
 		if (IS_ERR(config))
 			return PTR_ERR(config);
 	} else {
@@ -121,11 +120,6 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	}
 
 	if (!config)
-		return -ENOMEM;
-
-	drvdata = devm_kzalloc(&pdev->dev, sizeof(struct fixed_voltage_data),
-			       GFP_KERNEL);
-	if (!drvdata)
 		return -ENOMEM;
 
 	drvdata->desc.name = devm_kstrdup(&pdev->dev,
@@ -157,22 +151,45 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 
 	drvdata->desc.fixed_uV = config->microvolts;
 
-	if (config->gpio >= 0)
-		cfg.ena_gpio = config->gpio;
 	cfg.ena_gpio_invert = !config->enable_high;
 	if (config->enabled_at_boot) {
 		if (config->enable_high)
-			cfg.ena_gpio_flags |= GPIOF_OUT_INIT_HIGH;
+			gflags = GPIOD_OUT_HIGH;
 		else
-			cfg.ena_gpio_flags |= GPIOF_OUT_INIT_LOW;
+			gflags = GPIOD_OUT_LOW;
 	} else {
 		if (config->enable_high)
-			cfg.ena_gpio_flags |= GPIOF_OUT_INIT_LOW;
+			gflags = GPIOD_OUT_LOW;
 		else
-			cfg.ena_gpio_flags |= GPIOF_OUT_INIT_HIGH;
+			gflags = GPIOD_OUT_HIGH;
 	}
-	if (config->gpio_is_open_drain)
-		cfg.ena_gpio_flags |= GPIOF_OPEN_DRAIN;
+	if (config->gpio_is_open_drain) {
+		if (gflags == GPIOD_OUT_HIGH)
+			gflags = GPIOD_OUT_HIGH_OPEN_DRAIN;
+		else
+			gflags = GPIOD_OUT_LOW_OPEN_DRAIN;
+	}
+
+	/*
+	 * Some fixed regulators share the enable line between two
+	 * regulators which makes it necessary to get a handle on the
+	 * same descriptor for two different consumers. This will get
+	 * the GPIO descriptor, but only the first call will initialize
+	 * it so any flags such as inversion or open drain will only
+	 * be set up by the first caller and assumed identical on the
+	 * next caller.
+	 *
+	 * FIXME: find a better way to deal with this.
+	 */
+	gflags |= GPIOD_FLAGS_BIT_NONEXCLUSIVE;
+
+	/*
+	 * Do not use devm* here: the regulator core takes over the
+	 * lifecycle management of the GPIO descriptor.
+	 */
+	cfg.ena_gpiod = gpiod_get_optional(&pdev->dev, NULL, gflags);
+	if (IS_ERR(cfg.ena_gpiod))
+		return PTR_ERR(cfg.ena_gpiod);
 
 	cfg.dev = &pdev->dev;
 	cfg.init_data = config->init_data;
@@ -207,7 +224,6 @@ static struct platform_driver regulator_fixed_voltage_driver = {
 	.probe		= reg_fixed_voltage_probe,
 	.driver		= {
 		.name		= "reg-fixed-voltage",
-		.owner		= THIS_MODULE,
 		.of_match_table = of_match_ptr(fixed_of_match),
 	},
 };

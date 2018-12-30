@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * L2C-310 early resume code.  This can be used by platforms to restore
  * the settings of their L2 cache controller before restoring the
@@ -6,6 +7,7 @@
  * This code can only be used to if you are running in the secure world.
  */
 #include <linux/linkage.h>
+#include <asm/assembler.h>
 #include <asm/hardware/cache-l2x0.h>
 
 	.text
@@ -27,7 +29,7 @@ ENTRY(l2c310_early_resume)
 
 	@ Check that the address has been initialised
 	teq	r1, #0
-	moveq	pc, lr
+	reteq	lr
 
 	@ The prefetch and power control registers are revision dependent
 	@ and can be written whether or not the L2 cache is enabled
@@ -41,7 +43,7 @@ ENTRY(l2c310_early_resume)
 	@ Don't setup the L2 cache if it is already enabled
 	ldr	r0, [r1, #L2X0_CTRL]
 	tst	r0, #L2X0_CTRL_EN
-	movne	pc, lr
+	retne	lr
 
 	str	r3, [r1, #L310_TAG_LATENCY_CTRL]
 	str	r4, [r1, #L310_DATA_LATENCY_CTRL]
@@ -51,7 +53,7 @@ ENTRY(l2c310_early_resume)
 	str	r2, [r1, #L2X0_AUX_CTRL]
 	mov	r9, #L2X0_CTRL_EN
 	str	r9, [r1, #L2X0_CTRL]
-	mov	pc, lr
+	ret	lr
 ENDPROC(l2c310_early_resume)
 
 	.align

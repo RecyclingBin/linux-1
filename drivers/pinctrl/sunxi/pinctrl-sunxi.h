@@ -27,6 +27,7 @@
 #define PI_BASE	256
 #define PL_BASE	352
 #define PM_BASE	384
+#define PN_BASE	416
 
 #define SUNXI_PINCTRL_PIN(bank, pin)		\
 	PINCTRL_PIN(P ## bank ## _BASE + (pin), "P" #bank #pin)
@@ -53,7 +54,7 @@
 #define PULL_PINS_BITS		2
 #define PULL_PINS_MASK		0x03
 
-#define SUNXI_IRQ_NUMBER	32
+#define IRQ_PER_BANK		32
 
 #define IRQ_CFG_REG		0x200
 #define IRQ_CFG_IRQ_PER_REG		8
@@ -68,20 +69,39 @@
 #define IRQ_STATUS_IRQ_BITS		1
 #define IRQ_STATUS_IRQ_MASK		((1 << IRQ_STATUS_IRQ_BITS) - 1)
 
+#define IRQ_DEBOUNCE_REG	0x218
+
+#define IRQ_MEM_SIZE		0x20
+
 #define IRQ_EDGE_RISING		0x00
 #define IRQ_EDGE_FALLING	0x01
 #define IRQ_LEVEL_HIGH		0x02
 #define IRQ_LEVEL_LOW		0x03
 #define IRQ_EDGE_BOTH		0x04
 
+#define SUN4I_FUNC_INPUT	0
+#define SUN4I_FUNC_IRQ		6
+
+#define PINCTRL_SUN5I_A10S	BIT(1)
+#define PINCTRL_SUN5I_A13	BIT(2)
+#define PINCTRL_SUN5I_GR8	BIT(3)
+#define PINCTRL_SUN6I_A31	BIT(4)
+#define PINCTRL_SUN6I_A31S	BIT(5)
+#define PINCTRL_SUN4I_A10	BIT(6)
+#define PINCTRL_SUN7I_A20	BIT(7)
+#define PINCTRL_SUN8I_R40	BIT(8)
+
 struct sunxi_desc_function {
+	unsigned long	variant;
 	const char	*name;
 	u8		muxval;
+	u8		irqbank;
 	u8		irqnum;
 };
 
 struct sunxi_desc_pin {
 	struct pinctrl_pin_desc		pin;
+	unsigned long			variant;
 	struct sunxi_desc_function	*functions;
 };
 
@@ -89,6 +109,10 @@ struct sunxi_pinctrl_desc {
 	const struct sunxi_desc_pin	*pins;
 	int				npins;
 	unsigned			pin_base;
+	unsigned			irq_banks;
+	const unsigned int		*irq_bank_map;
+	bool				irq_read_needs_mux;
+	bool				disable_strict_mode;
 };
 
 struct sunxi_pinctrl_function {
@@ -99,7 +123,6 @@ struct sunxi_pinctrl_function {
 
 struct sunxi_pinctrl_group {
 	const char	*name;
-	unsigned long	config;
 	unsigned	pin;
 };
 
@@ -113,15 +136,24 @@ struct sunxi_pinctrl {
 	unsigned			nfunctions;
 	struct sunxi_pinctrl_group	*groups;
 	unsigned			ngroups;
-	int				irq;
-	int				irq_array[SUNXI_IRQ_NUMBER];
-	spinlock_t			lock;
+	int				*irq;
+	unsigned			*irq_array;
+	raw_spinlock_t			lock;
 	struct pinctrl_dev		*pctl_dev;
+	unsigned long			variant;
 };
 
 #define SUNXI_PIN(_pin, ...)					\
 	{							\
 		.pin = _pin,					\
+		.functions = (struct sunxi_desc_function[]){	\
+			__VA_ARGS__, { } },			\
+	}
+
+#define SUNXI_PIN_VARIANT(_pin, _variant, ...)			\
+	{							\
+		.pin = _pin,					\
+		.variant = _variant,				\
 		.functions = (struct sunxi_desc_function[]){	\
 			__VA_ARGS__, { } },			\
 	}
@@ -132,10 +164,25 @@ struct sunxi_pinctrl {
 		.muxval = _val,					\
 	}
 
+#define SUNXI_FUNCTION_VARIANT(_val, _name, _variant)		\
+	{							\
+		.name = _name,					\
+		.muxval = _val,					\
+		.variant = _variant,				\
+	}
+
 #define SUNXI_FUNCTION_IRQ(_val, _irq)				\
 	{							\
 		.name = "irq",					\
 		.muxval = _val,					\
+		.irqnum = _irq,					\
+	}
+
+#define SUNXI_FUNCTION_IRQ_BANK(_val, _bank, _irq)		\
+	{							\
+		.name = "irq",					\
+		.muxval = _val,					\
+		.irqbank = _bank,				\
 		.irqnum = _irq,					\
 	}
 
@@ -216,10 +263,22 @@ static inline u32 sunxi_pull_offset(u16 pin)
 	return pin_num * PULL_PINS_BITS;
 }
 
-static inline u32 sunxi_irq_cfg_reg(u16 irq)
+static inline u32 sunxi_irq_hw_bank_num(const struct sunxi_pinctrl_desc *desc, u8 bank)
 {
-	u8 reg = irq / IRQ_CFG_IRQ_PER_REG * 0x04;
-	return reg + IRQ_CFG_REG;
+	if (!desc->irq_bank_map)
+		return bank;
+	else
+		return desc->irq_bank_map[bank];
+}
+
+static inline u32 sunxi_irq_cfg_reg(const struct sunxi_pinctrl_desc *desc,
+				    u16 irq)
+{
+	u8 bank = irq / IRQ_PER_BANK;
+	u8 reg = (irq % IRQ_PER_BANK) / IRQ_CFG_IRQ_PER_REG * 0x04;
+
+	return IRQ_CFG_REG +
+	       sunxi_irq_hw_bank_num(desc, bank) * IRQ_MEM_SIZE + reg;
 }
 
 static inline u32 sunxi_irq_cfg_offset(u16 irq)
@@ -228,10 +287,17 @@ static inline u32 sunxi_irq_cfg_offset(u16 irq)
 	return irq_num * IRQ_CFG_IRQ_BITS;
 }
 
-static inline u32 sunxi_irq_ctrl_reg(u16 irq)
+static inline u32 sunxi_irq_ctrl_reg_from_bank(const struct sunxi_pinctrl_desc *desc, u8 bank)
 {
-	u8 reg = irq / IRQ_CTRL_IRQ_PER_REG * 0x04;
-	return reg + IRQ_CTRL_REG;
+	return IRQ_CTRL_REG + sunxi_irq_hw_bank_num(desc, bank) * IRQ_MEM_SIZE;
+}
+
+static inline u32 sunxi_irq_ctrl_reg(const struct sunxi_pinctrl_desc *desc,
+				     u16 irq)
+{
+	u8 bank = irq / IRQ_PER_BANK;
+
+	return sunxi_irq_ctrl_reg_from_bank(desc, bank);
 }
 
 static inline u32 sunxi_irq_ctrl_offset(u16 irq)
@@ -240,10 +306,24 @@ static inline u32 sunxi_irq_ctrl_offset(u16 irq)
 	return irq_num * IRQ_CTRL_IRQ_BITS;
 }
 
-static inline u32 sunxi_irq_status_reg(u16 irq)
+static inline u32 sunxi_irq_debounce_reg_from_bank(const struct sunxi_pinctrl_desc *desc, u8 bank)
 {
-	u8 reg = irq / IRQ_STATUS_IRQ_PER_REG * 0x04;
-	return reg + IRQ_STATUS_REG;
+	return IRQ_DEBOUNCE_REG +
+	       sunxi_irq_hw_bank_num(desc, bank) * IRQ_MEM_SIZE;
+}
+
+static inline u32 sunxi_irq_status_reg_from_bank(const struct sunxi_pinctrl_desc *desc, u8 bank)
+{
+	return IRQ_STATUS_REG +
+	       sunxi_irq_hw_bank_num(desc, bank) * IRQ_MEM_SIZE;
+}
+
+static inline u32 sunxi_irq_status_reg(const struct sunxi_pinctrl_desc *desc,
+				       u16 irq)
+{
+	u8 bank = irq / IRQ_PER_BANK;
+
+	return sunxi_irq_status_reg_from_bank(desc, bank);
 }
 
 static inline u32 sunxi_irq_status_offset(u16 irq)
@@ -252,7 +332,11 @@ static inline u32 sunxi_irq_status_offset(u16 irq)
 	return irq_num * IRQ_STATUS_IRQ_BITS;
 }
 
-int sunxi_pinctrl_init(struct platform_device *pdev,
-		       const struct sunxi_pinctrl_desc *desc);
+int sunxi_pinctrl_init_with_variant(struct platform_device *pdev,
+				    const struct sunxi_pinctrl_desc *desc,
+				    unsigned long variant);
+
+#define sunxi_pinctrl_init(_dev, _desc) \
+	sunxi_pinctrl_init_with_variant(_dev, _desc, 0)
 
 #endif /* __PINCTRL_SUNXI_H */
